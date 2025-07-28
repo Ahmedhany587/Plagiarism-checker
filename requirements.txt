@@ -1,0 +1,17 @@
+torch
+sentence-transformers
+PyMuPDF
+python-dotenv
+hf_xet
+tqdm 
+rapidfuzz
+git+https://github.com/openai/CLIP.git
+imagehash
+psutil
+phidata
+streamlit
+plotly
+pandas
+matplotlib
+opencv-python
+fiftyone
