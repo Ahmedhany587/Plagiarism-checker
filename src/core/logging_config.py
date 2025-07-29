@@ -45,7 +45,8 @@ class StructuredFormatter(logging.Formatter):
         if hasattr(record, 'duration'):
             log_entry['duration'] = record.duration
             
-        return json.dumps(log_entry)
+        # Ensure proper Unicode handling for Arabic text in JSON
+        return json.dumps(log_entry, ensure_ascii=False, separators=(',', ':'))
 
 
 class ProductionLogger:
@@ -116,7 +117,8 @@ class ProductionLogger:
             app_handler = logging.handlers.RotatingFileHandler(
                 self.log_dir / "app.log",
                 maxBytes=self.max_file_size,
-                backupCount=self.backup_count
+                backupCount=self.backup_count,
+                encoding='utf-8'  # Ensure UTF-8 encoding for Arabic text
             )
             app_handler.setLevel(self.log_level)
             app_handler.setFormatter(formatter)
@@ -126,7 +128,8 @@ class ProductionLogger:
             error_handler = logging.handlers.RotatingFileHandler(
                 self.log_dir / "errors.log",
                 maxBytes=self.max_file_size,
-                backupCount=self.backup_count
+                backupCount=self.backup_count,
+                encoding='utf-8'  # Ensure UTF-8 encoding for Arabic text
             )
             error_handler.setLevel(logging.WARNING)
             error_handler.setFormatter(formatter)
