@@ -14,8 +14,9 @@ from src.core.semantic_similarity import PDFSimilarityCalculator
 from src.core.sequence_similarity import SequenceSimilarityCalculator
 from src.core.exact_match import ExactMatchDetector
 
-# Import heavy image extraction modules at the top.
-from src.utils.pdf_img_extractor import PDFImageExtractor, build_dataset_from_results, index_and_report_cross_pdf_duplicates
+# Import image extraction and duplication detection modules
+from src.utils.pdf_img_extractor import PDFImageExtractor
+from src.utils.image_duplication_detector import build_dataset_from_results, index_and_report_cross_pdf_duplicates
 
 # Import and setup production logging
 from src.core.logging_config import setup_logging

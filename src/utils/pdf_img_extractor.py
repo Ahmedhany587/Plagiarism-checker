@@ -13,8 +13,7 @@ from PIL import Image
 import numpy as np
 import imagehash
 import matplotlib.pyplot as plt
-import fiftyone as fo
-import fiftyone.brain as fob
+# FiftyOne imports moved to image_duplication_detector.py
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -140,99 +139,7 @@ class PDFImageExtractor:
         return results
 
 
-def build_dataset_from_results(results: List[dict], dataset_name: str) -> fo.Dataset:
-    """Creates a FiftyOne dataset from extracted images and stores PDF origin."""
-    if fo.dataset_exists(dataset_name):
-        fo.delete_dataset(dataset_name)
-
-    dataset = fo.Dataset(dataset_name)
-    samples = [fo.Sample(filepath=r["filepath"], pdf_name=r["pdf"]) for r in results]
-    dataset.add_samples(samples)
-
-    logger.info(f"Dataset '{dataset_name}' created with {len(samples)} images.")
-    return dataset
-
-
-def index_and_report_cross_pdf_duplicates(dataset: fo.Dataset, brain_key: str, thresh: float, progress_callback=None) -> None:
-    """Detects image duplicates across different PDF documents."""
-    if dataset.has_brain_run(brain_key):
-        dataset.delete_brain_run(brain_key)
-
-    # Notify about embedding start
-    if progress_callback:
-        progress_callback("starting", 0, len(dataset), "Initializing CLIP model...")
-    
-    # Compute embeddings with progress tracking
-    try:
-        index = fob.compute_similarity(dataset, model="clip-vit-base32-torch", brain_key=brain_key)
-        
-        # Notify embedding completion
-        if progress_callback:
-            progress_callback("embedding_complete", len(dataset), len(dataset), "Computing similarity matrix...")
-            
-    except Exception as e:
-        if progress_callback:
-            progress_callback("error", 0, len(dataset), f"Embedding failed: {str(e)}")
-        raise
-    
-    # Find duplicates
-    if progress_callback:
-        progress_callback("finding_duplicates", len(dataset), len(dataset), "Finding duplicate pairs...")
-    
-    index.find_duplicates(thresh=thresh)
-    
-    if progress_callback:
-        progress_callback("complete", len(dataset), len(dataset), "Analysis complete!")
-
-    dup_view = index.duplicates_view(type_field="dup_type", id_field="nearest_id", dist_field="distance")
-
-    seen_pairs = set()
-    cross_pdf_pairs = []
-
-    for sample in dup_view:
-        if sample["dup_type"] != "duplicate":
-            continue
-
-        orig_id = sample["nearest_id"]
-        dup_id = sample.id
-
-        orig_pdf = dataset[orig_id]["pdf_name"]
-        dup_pdf = sample["pdf_name"]
-
-        if orig_pdf == dup_pdf:
-            continue
-
-        pair_key = tuple(sorted((orig_id, dup_id)))
-        if pair_key in seen_pairs:
-            continue
-
-        seen_pairs.add(pair_key)
-        cross_pdf_pairs.append((orig_id, dup_id, sample["distance"]))
-
-    if not cross_pdf_pairs:
-        logger.info("No cross-PDF duplicates found.")
-        return None
-
-    logger.info("Cross-PDF duplicate pairs:")
-    pairs_info = []
-    for orig_id, dup_id, dist in cross_pdf_pairs:
-        orig_sample = dataset[orig_id]
-        dup_sample = dataset[dup_id]
-        pair_info = {
-            'orig_path': orig_sample.filepath,
-            'dup_path': dup_sample.filepath,
-            'orig_pdf': orig_sample.pdf_name,
-            'dup_pdf': dup_sample.pdf_name,
-            'distance': dist,
-            'similarity': 1 - dist
-        }
-        pairs_info.append(pair_info)
-        logger.info(
-            f"{Path(orig_sample.filepath).name} ({orig_sample.pdf_name}) <-> "
-            f"{Path(dup_sample.filepath).name} ({dup_sample.pdf_name}) dist={dist:.3f}"
-        )
-    
-    return pairs_info
+# Image duplication detection functions have been moved to image_duplication_detector.py
 
 
 
