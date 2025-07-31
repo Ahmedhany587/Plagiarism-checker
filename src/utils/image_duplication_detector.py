@@ -51,7 +51,7 @@ class ImageDuplicationDetector:
         
         # Compute embeddings with progress tracking
         try:
-            index = fob.compute_similarity(dataset, model="clip-vit-base32-torch", brain_key=brain_key)
+            index = fob.compute_similarity(dataset, model="clip-vit-base32-torch", brain_key=brain_key, backend="sklearn")
             
             # Notify embedding completion
             if progress_callback:

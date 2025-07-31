@@ -3,7 +3,6 @@ import uuid
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
 import logging
 from datetime import datetime
 

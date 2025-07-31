@@ -237,6 +237,9 @@ transformers_cache/
 # CLIP model cache
 clip_cache/
 
+# Sentence Transformers model cache
+model_cache/
+
 # Temporary files
 tmp/
 temp/

@@ -29,6 +29,11 @@ def _init_worker(model_name: str, device: str, hf_token: Optional[str]) -> None:
     logger = logging.getLogger(__name__)
     
     try:
+        # Ensure model cache directory is set for worker processes
+        model_cache_dir = os.path.join(os.getcwd(), "model_cache", "sentence_transformers")
+        os.environ['SENTENCE_TRANSFORMERS_HOME'] = model_cache_dir
+        os.makedirs(model_cache_dir, exist_ok=True)
+        
         logger.info(f"Initializing worker with model {model_name} on device {device}")
         _worker_model = SentenceTransformer(model_name, device=device, token=hf_token)
         logger.info("Worker initialized successfully")
@@ -161,6 +166,12 @@ class EmbeddingGenerator(LoggerMixin):
                 self.logger.info("HuggingFace token loaded from environment")
             else:
                 self.logger.warning("No HuggingFace token found in environment")
+            
+            # Setup custom model cache directory for faster loading
+            model_cache_dir = os.path.join(os.getcwd(), "model_cache", "sentence_transformers")
+            os.environ['SENTENCE_TRANSFORMERS_HOME'] = model_cache_dir
+            os.makedirs(model_cache_dir, exist_ok=True)
+            self.logger.info(f"Sentence Transformers cache directory: {model_cache_dir}")
             
             # Setup device
             self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
