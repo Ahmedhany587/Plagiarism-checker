@@ -869,13 +869,39 @@ def run_text_analysis(directory, chunk_size=5000, similarity_threshold=0.3):
             embeddings = embedder.generate_embeddings(chunks)
             overall_progress.progress(60)
             
+            # Check if any embeddings were generated
+            if not embeddings or len(embeddings) == 0:
+                spinner_placeholder.empty()
+                st.error("❌ No text content could be extracted from your PDF files.")
+                st.error("This could be because:")
+                st.error("• PDFs contain only scanned images without text")
+                st.error("• PDFs are password protected")
+                st.error("• PDFs are corrupted or invalid")
+                st.error("• File encoding issues with Arabic/Unicode filenames")
+                logger.error("No embeddings generated - cannot proceed with analysis")
+                return None, None, None
+            
+            # Check if we have valid embeddings for at least 2 PDFs
+            valid_embeddings = {k: v for k, v in embeddings.items() if v and len(v) > 0}
+            if len(valid_embeddings) < 2:
+                spinner_placeholder.empty()
+                st.error(f"❌ Need at least 2 PDFs with extractable text. Found {len(valid_embeddings)} valid PDF(s).")
+                st.info("PDF processing results:")
+                for pdf_name, emb_list in embeddings.items():
+                    if emb_list and len(emb_list) > 0:
+                        st.success(f"✅ {pdf_name}: {len(emb_list)} text chunks")
+                    else:
+                        st.error(f"❌ {pdf_name}: No text content found")
+                logger.error(f"Only {len(valid_embeddings)} PDFs have valid embeddings - cannot proceed")
+                return None, None, None
+            
             # Step 4: Compute similarities
             with spinner_placeholder:
                 st.markdown('<div class="spinner-container"><div class="spinner spinner-analyzing"></div></div>', unsafe_allow_html=True)
             status_text.info("🔍 Comparing documents for similarities...")
             step_info.text("Step 4/5: Finding matching content between documents")
             
-            similarity_calculator = PDFSimilarityCalculator(embeddings)
+            similarity_calculator = PDFSimilarityCalculator(valid_embeddings)
             semantic_scores = similarity_calculator.compute_all_pdf_similarities()
             
             seq_similarity_calculator = SequenceSimilarityCalculator()

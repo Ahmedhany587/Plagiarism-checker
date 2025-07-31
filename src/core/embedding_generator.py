@@ -4,20 +4,15 @@ import os
 from dotenv import load_dotenv
 from tqdm import tqdm
 import multiprocessing
-import hashlib
-import pickle
 import time
 import psutil
 from typing import Dict, List, Optional, Any
-from pathlib import Path
 
 from .logging_config import LoggerMixin
 from .validation import (
     ParameterValidator, FileValidationError, ParameterValidationError,
     validate_inputs, handle_exceptions
 )
-
-CACHE_DIR = 'embedding_cache'
 
 # Global model for worker processes
 _worker_model = None
@@ -41,44 +36,6 @@ def _init_worker(model_name: str, device: str, hf_token: Optional[str]) -> None:
         logger.error(f"Failed to initialize worker: {str(e)}")
         raise
 
-def _hash_pdf(pdf_name: str, pages: List[str]) -> str:
-    """
-    Generate hash for PDF content based on filename and page content.
-    
-    Args:
-        pdf_name: Name of the PDF file
-        pages: List of page content strings
-        
-    Returns:
-        SHA256 hash string
-    """
-    import logging
-    logger = logging.getLogger(__name__)
-    
-    try:
-        m = hashlib.sha256()
-        m.update(pdf_name.encode('utf-8'))
-        
-        # Hash page content with error handling
-        for i, page in enumerate(pages):
-            try:
-                if isinstance(page, str):
-                    m.update(page.encode('utf-8'))
-                else:
-                    logger.warning(f"Non-string page content at index {i} in {pdf_name}")
-                    m.update(str(page).encode('utf-8'))
-            except UnicodeEncodeError as e:
-                logger.warning(f"Unicode encoding error for page {i} in {pdf_name}: {str(e)}")
-                m.update(page.encode('utf-8', errors='ignore'))
-        
-        hash_value = m.hexdigest()
-        logger.debug(f"Generated hash for {pdf_name}: {hash_value[:16]}...")
-        return hash_value
-        
-    except Exception as e:
-        logger.error(f"Failed to hash PDF {pdf_name}: {str(e)}")
-        # Fallback to simple hash
-        return hashlib.sha256(f"{pdf_name}_{len(pages)}".encode('utf-8')).hexdigest()
 
 def _embed_pdf_worker(args: tuple) -> tuple:
     """
@@ -144,7 +101,7 @@ class EmbeddingGenerator(LoggerMixin):
         batch_size=lambda x: ParameterValidator.validate_positive_integer(x, "batch_size", min_value=1, max_value=2000) if x is not None else None
     )
     def __init__(self, 
-                 model_name: str = 'sentence-transformers/paraphrase-multilingual-mpnet-base-v2', 
+                 model_name: str = 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2', 
                  batch_size: Optional[int] = None):
         """
         Initialize the EmbeddingGenerator.
@@ -193,15 +150,6 @@ class EmbeddingGenerator(LoggerMixin):
                     self.logger.warning(f"Failed to auto-detect batch size: {str(e)}. Using default: 32")
                     self.batch_size = 32
             
-            # Setup cache directory
-            self.cache_dir = Path(CACHE_DIR)
-            try:
-                self.cache_dir.mkdir(exist_ok=True)
-                self.logger.info(f"Cache directory ready: {self.cache_dir}")
-            except Exception as e:
-                self.logger.error(f"Failed to create cache directory: {str(e)}")
-                raise RuntimeError(f"Cannot create cache directory: {str(e)}")
-            
             # Load model for main process
             try:
                 self.logger.info(f"Loading model: {model_name}")
@@ -210,63 +158,6 @@ class EmbeddingGenerator(LoggerMixin):
             except Exception as e:
                 self.logger.error(f"Failed to load model {model_name}: {str(e)}")
                 raise RuntimeError(f"Cannot load model: {str(e)}")
-
-    def _cache_path(self, pdf_name: str, pages: List[str]) -> Path:
-        """Generate cache file path for a PDF."""
-        hash_val = _hash_pdf(pdf_name, pages)
-        return self.cache_dir / f"{hash_val}.pkl"
-
-    @handle_exceptions(default_return=None)
-    def _load_from_cache(self, pdf_name: str, pages: List[str]) -> Optional[Any]:
-        """
-        Load embeddings from cache if available.
-        
-        Args:
-            pdf_name: Name of the PDF file
-            pages: List of page content
-            
-        Returns:
-            Cached embeddings or None if not found
-        """
-        try:
-            path = self._cache_path(pdf_name, pages)
-            if path.exists():
-                with open(path, 'rb') as f:
-                    embeddings = pickle.load(f)
-                self.logger.debug(f"Loaded embeddings from cache for {pdf_name}")
-                return embeddings
-            else:
-                self.logger.debug(f"No cache found for {pdf_name}")
-                return None
-        except Exception as e:
-            self.logger.warning(f"Failed to load cache for {pdf_name}: {str(e)}")
-            return None
-
-    @handle_exceptions(default_return=False)
-    def _save_to_cache(self, pdf_name: str, pages: List[str], embeddings: Any) -> bool:
-        """
-        Save embeddings to cache.
-        
-        Args:
-            pdf_name: Name of the PDF file
-            pages: List of page content
-            embeddings: Embeddings to cache
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            path = self._cache_path(pdf_name, pages)
-            path.parent.mkdir(exist_ok=True)
-            
-            with open(path, 'wb') as f:
-                pickle.dump(embeddings, f)
-            
-            self.logger.debug(f"Saved embeddings to cache for {pdf_name}")
-            return True
-        except Exception as e:
-            self.logger.warning(f"Failed to save cache for {pdf_name}: {str(e)}")
-            return False
 
     @handle_exceptions(default_return=[])
     def _embed_pdf_single(self, pdf_name: str, pages: List[str]) -> List[Any]:
@@ -332,30 +223,7 @@ class EmbeddingGenerator(LoggerMixin):
                 return {}
             
             embeddings = {}
-            to_process = []
-            cache_hits = 0
-            
-            # Check cache first
-            self.logger.info("Checking cache for existing embeddings...")
-            for pdf_name, pages in chunks.items():
-                try:
-                    cached = self._load_from_cache(pdf_name, pages)
-                    if cached is not None:
-                        embeddings[pdf_name] = cached
-                        cache_hits += 1
-                        self.logger.debug(f"Cache hit for {pdf_name}")
-                    else:
-                        to_process.append((pdf_name, pages, self.batch_size))
-                        self.logger.debug(f"Cache miss for {pdf_name}")
-                except Exception as e:
-                    self.logger.warning(f"Cache check failed for {pdf_name}: {str(e)}")
-                    to_process.append((pdf_name, pages, self.batch_size))
-            
-            self.logger.info(f"Cache summary: {cache_hits} hits, {len(to_process)} files to process")
-            
-            if not to_process:
-                self.logger.info("All embeddings loaded from cache")
-                return embeddings
+            to_process = [(pdf_name, pages, self.batch_size) for pdf_name, pages in chunks.items()]
             
             # Determine processing strategy
             num_pdfs = len(to_process)
@@ -384,13 +252,6 @@ class EmbeddingGenerator(LoggerMixin):
                             if pdf_embeddings:
                                 embeddings[pdf_name] = pdf_embeddings
                                 successful_embeddings += 1
-                                
-                                # Save to cache
-                                try:
-                                    original_pages = chunks[pdf_name]
-                                    self._save_to_cache(pdf_name, original_pages, pdf_embeddings)
-                                except Exception as e:
-                                    self.logger.warning(f"Failed to cache embeddings for {pdf_name}: {str(e)}")
                             else:
                                 failed_embeddings += 1
                                 self.logger.error(f"Failed to generate embeddings for {pdf_name}")
@@ -405,7 +266,6 @@ class EmbeddingGenerator(LoggerMixin):
                             pdf_embeddings = self._embed_pdf_single(pdf_name, pages)
                             if pdf_embeddings:
                                 embeddings[pdf_name] = pdf_embeddings
-                                self._save_to_cache(pdf_name, pages, pdf_embeddings)
                         except Exception as pdf_error:
                             self.logger.error(f"Failed to generate embeddings for {pdf_name}: {str(pdf_error)}")
             else:
@@ -420,7 +280,6 @@ class EmbeddingGenerator(LoggerMixin):
                         if pdf_embeddings:
                             embeddings[pdf_name] = pdf_embeddings
                             successful_embeddings += 1
-                            self._save_to_cache(pdf_name, pages, pdf_embeddings)
                         else:
                             failed_embeddings += 1
                     except Exception as e:

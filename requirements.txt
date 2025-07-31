@@ -1,17 +1,27 @@
-torch
-sentence-transformers
-PyMuPDF
-python-dotenv
+# Core application dependencies
+streamlit>=1.39.0
+pandas==2.3.1
+numpy>=2.0.0
+
+# Machine Learning and Deep Learning
+torch>=2.5.0
+sentence-transformers>=3.3.0
+torchvision
 hf_xet
-tqdm 
-rapidfuzz
-git+https://github.com/openai/CLIP.git
-imagehash
-psutil
-phidata
-streamlit
-plotly
-pandas
-matplotlib
-opencv-python
-fiftyone
+# PDF Processing
+PyMuPDF>=1.24.0
+phidata>=2.7.10
+
+# Text Processing and Similarity
+rapidfuzz>=3.10.0
+
+# Utility packages
+python-dotenv>=1.0.0
+tqdm>=4.66.0
+psutil>=6.1.0
+
+# Image Processing (for image analysis features)
+Pillow>=11.0.0
+imagehash>=4.3.0
+matplotlib>=3.9.0
+fiftyone>=1.0.0

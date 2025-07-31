@@ -211,10 +211,66 @@ class PDFHandler(LoggerMixin):
             self.logger.info(f"Retrieved page counts for {len(page_counts)} PDF files")
             return page_counts
 
+    def _extract_chunks_from_pdf_fallback(self, pdf_path: str, chunk_size: int) -> tuple:
+        """
+        Fallback method to extract text using PyMuPDF directly.
+        Better handles Unicode/Arabic filenames.
+        
+        Args:
+            pdf_path: Path to the PDF file
+            chunk_size: Size of text chunks to create
+            
+        Returns:
+            Tuple of (normalized_filename, list_of_chunks)
+        """
+        original_filename = os.path.basename(pdf_path)
+        normalized_filename = normalize_filename(original_filename)
+        safe_filename = safe_filename_encode(normalized_filename)
+        
+        try:
+            self.logger.debug(f"Using PyMuPDF fallback for {safe_filename}")
+            
+            # Use PyMuPDF directly - better Unicode support
+            doc = fitz.open(pdf_path)
+            file_chunks = []
+            current_chunk = ""
+            
+            for page_num in range(len(doc)):
+                page = doc.load_page(page_num)
+                text = page.get_text()
+                
+                if text.strip():
+                    current_chunk += text + "\n"
+                    
+                    # Split into chunks when we reach the size limit
+                    while len(current_chunk) >= chunk_size:
+                        chunk_end = current_chunk.rfind(' ', 0, chunk_size)
+                        if chunk_end == -1:
+                            chunk_end = chunk_size
+                        
+                        chunk = current_chunk[:chunk_end].strip()
+                        if chunk:
+                            file_chunks.append(chunk)
+                        
+                        current_chunk = current_chunk[chunk_end:].strip()
+            
+            # Add remaining text as final chunk
+            if current_chunk.strip():
+                file_chunks.append(current_chunk.strip())
+            
+            doc.close()
+            
+            self.logger.info(f"PyMuPDF fallback extracted {len(file_chunks)} chunks from {safe_filename}")
+            return normalized_filename, file_chunks
+            
+        except Exception as e:
+            self.logger.error(f"PyMuPDF fallback failed for {safe_filename}: {str(e)}")
+            return normalized_filename, []
+
     def _extract_chunks_from_pdf(self, pdf_path: str, chunk_size: int) -> tuple:
         """
         Extract text chunks from a single PDF file.
-        Enhanced to properly handle Arabic filenames.
+        Enhanced to properly handle Arabic filenames with fallback support.
         
         Args:
             pdf_path: Path to the PDF file
@@ -233,22 +289,54 @@ class PDFHandler(LoggerMixin):
             
             self.logger.debug(f"Extracting chunks from {safe_filename} with chunk size {chunk_size}")
             
-            kb = PDFKnowledgeBase(
-                path=pdf_path,
-                reader=PDFReader(),
-                chunking_strategy=DocumentChunking(chunk_size=chunk_size),
-            )
-            
-            documents = kb.reader.read(kb.path)
-            file_chunks = []
-            
-            for doc in documents:
-                for chunk in kb.chunking_strategy.chunk(doc):
-                    if chunk.content and chunk.content.strip():
-                        file_chunks.append(chunk.content.strip())
-            
-            self.logger.info(f"Successfully extracted {len(file_chunks)} chunks from {safe_filename}")
-            return normalized_filename, file_chunks
+            # Try phidata first (preferred method)
+            try:
+                # Convert path to proper format for phidata library
+                # Use Path object to ensure proper Unicode handling
+                pdf_path_obj = Path(pdf_path)
+                
+                # Ensure the path exists and is accessible
+                if not pdf_path_obj.exists():
+                    raise FileValidationError(f"PDF file not found: {pdf_path}", field="pdf_path", value=pdf_path)
+                
+                # Use string representation of Path object for phidata
+                # This ensures proper Unicode path handling on Windows
+                kb = PDFKnowledgeBase(
+                    path=str(pdf_path_obj.resolve()),
+                    reader=PDFReader(),
+                    chunking_strategy=DocumentChunking(chunk_size=chunk_size),
+                )
+                
+                self.logger.debug(f"Reading documents from {safe_filename} using phidata...")
+                documents = kb.reader.read(kb.path)
+                self.logger.debug(f"Found {len(documents)} documents in {safe_filename}")
+                
+                file_chunks = []
+                
+                for i, doc in enumerate(documents):
+                    if doc.content:
+                        self.logger.debug(f"Document {i}: {len(doc.content)} characters")
+                        chunk_count = 0
+                        for chunk in kb.chunking_strategy.chunk(doc):
+                            if chunk.content and chunk.content.strip():
+                                file_chunks.append(chunk.content.strip())
+                                chunk_count += 1
+                        self.logger.debug(f"Document {i}: created {chunk_count} chunks")
+                    else:
+                        self.logger.warning(f"Document {i} in {safe_filename} has no content")
+                
+                # If phidata succeeded but found no content, try fallback
+                if not file_chunks:
+                    self.logger.warning(f"phidata extracted no content from {safe_filename}, trying PyMuPDF fallback...")
+                    return self._extract_chunks_from_pdf_fallback(pdf_path, chunk_size)
+                
+                self.logger.info(f"phidata successfully extracted {len(file_chunks)} chunks from {safe_filename}")
+                return normalized_filename, file_chunks
+                
+            except Exception as phidata_error:
+                self.logger.warning(f"phidata failed for {safe_filename}: {str(phidata_error)}")
+                self.logger.info(f"Trying PyMuPDF fallback for {safe_filename}...")
+                return self._extract_chunks_from_pdf_fallback(pdf_path, chunk_size)
             
         except FileValidationError:
             self.logger.error(f"File validation failed for {safe_filename}")
@@ -257,6 +345,15 @@ class PDFHandler(LoggerMixin):
             safe_path = safe_filename_encode(pdf_path)
             self.logger.error(f"Error processing {safe_filename}: {str(e)}", 
                             extra={'file_path': safe_path})
+            
+            # Additional debugging for Arabic filename issues
+            self.logger.debug(f"Original path: {repr(pdf_path)}")
+            self.logger.debug(f"Path exists: {os.path.exists(pdf_path)}")
+            self.logger.debug(f"Path encoding: {pdf_path.encode('utf-8', errors='replace')}")
+            
+            import traceback
+            self.logger.debug(f"Full traceback: {traceback.format_exc()}")
+            
             # Return empty chunks instead of failing completely
             return normalized_filename, []
 
