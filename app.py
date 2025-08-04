@@ -7,7 +7,7 @@ import logging
 from datetime import datetime
 
 # Import your existing modules used for text analysis
-from src.core.pdf_handler import PDFHandler
+from src.core.pdf_handler import PDFHandler, find_pdf_files
 from src.core.embedding_generator import EmbeddingGenerator
 from src.core.semantic_similarity import PDFSimilarityCalculator
 from src.core.sequence_similarity import SequenceSimilarityCalculator
@@ -249,28 +249,106 @@ def reset_analysis_state(new_directory):
 
 
 def get_directory_input():
-    """Enhanced sidebar for getting and validating the PDF directory."""
+    """Simple sidebar for getting PDF directory path or uploading files."""
+    import os
+    import tempfile
+    
     st.sidebar.markdown("""
     <div class="sidebar-header">
         <h3>🎛️ Analysis Settings</h3>
     </div>
     """, unsafe_allow_html=True)
     
-    st.sidebar.markdown("### 📁 Document Folder")
-    directory = st.sidebar.text_input(
-        "📂 Enter PDF Directory Path", 
-        value=st.session_state.current_directory or "",
-        help="Enter the full path to your folder containing PDF documents",
-        placeholder="C:/path/to/your/pdfs"
-    )
+    # Add tabs for different input methods
+    tab1, tab2 = st.sidebar.tabs(["📁 Server Path", "📤 Upload Files"])
     
-    # Check if directory changed
+    with tab1:
+        st.markdown("### 📁 Server Directory")
+        directory = st.text_input(
+            "📂 Enter Server Directory Path", 
+            value=st.session_state.current_directory or "",
+            help="Enter the full path to PDFs on the server",
+            placeholder="/app/pdfs or ./pdfs"
+        )
+    
+    with tab2:
+        st.markdown("### 📤 Upload Directory")
+        
+        # Option 1: Zip file upload (recommended for directories)
+        st.markdown("**Option 1: Upload as ZIP file** (Recommended)")
+        zip_file = st.file_uploader(
+            "Upload ZIP file containing PDFs", 
+            type="zip",
+            help="Zip your PDF directory and upload it here"
+        )
+        
+        if zip_file:
+            import zipfile
+            # Create temporary directory for extracted files
+            if 'upload_dir' not in st.session_state:
+                st.session_state.upload_dir = tempfile.mkdtemp(prefix="uploaded_pdfs_")
+            
+            upload_dir = st.session_state.upload_dir
+            
+            # Extract zip file
+            try:
+                with zipfile.ZipFile(zip_file, 'r') as zip_ref:
+                    zip_ref.extractall(upload_dir)
+                
+                # Count PDF files in extracted directory
+                pdf_count = 0
+                for root, dirs, files in os.walk(upload_dir):
+                    pdf_count += len([f for f in files if f.lower().endswith('.pdf')])
+                
+                directory = upload_dir
+                st.success(f"✅ Extracted ZIP file with {pdf_count} PDF files")
+                
+            except Exception as e:
+                st.error(f"❌ Error extracting ZIP file: {str(e)}")
+                directory = None
+        else:
+            # Option 2: Multiple file selection
+            st.markdown("**Option 2: Select all PDFs from your directory**")
+            uploaded_files = st.file_uploader(
+                "Select all PDF files from your directory", 
+                type="pdf", 
+                accept_multiple_files=True,
+                help="Hold Ctrl/Cmd and select all PDFs from your directory"
+            )
+            
+            if uploaded_files:
+                # Create temporary directory for uploaded files
+                if 'upload_dir' not in st.session_state:
+                    st.session_state.upload_dir = tempfile.mkdtemp(prefix="uploaded_pdfs_")
+                
+                upload_dir = st.session_state.upload_dir
+                
+                # Save uploaded files
+                for uploaded_file in uploaded_files:
+                    file_path = os.path.join(upload_dir, uploaded_file.name)
+                    with open(file_path, "wb") as f:
+                        f.write(uploaded_file.getbuffer())
+                
+                directory = upload_dir
+                st.success(f"✅ Uploaded {len(uploaded_files)} PDF files")
+            else:
+                directory = None
+    
+    # Simple directory check
     if directory != st.session_state.current_directory and directory:
         if os.path.exists(directory):
             reset_analysis_state(directory)
         
     if directory and os.path.exists(directory):
-        pdf_files = [f for f in os.listdir(directory) if f.lower().endswith('.pdf')]
+        # Use recursive search to find PDFs in subdirectories (same as ZIP extraction)
+        pdf_files = []
+        for root, dirs, files in os.walk(directory):
+            for file in files:
+                if file.lower().endswith('.pdf'):
+                    # Store relative path for display
+                    rel_path = os.path.relpath(os.path.join(root, file), directory)
+                    pdf_files.append(rel_path)
+        
         file_count = len(pdf_files)
         
         if file_count > 0:
@@ -304,10 +382,17 @@ def get_directory_input():
     
     with st.sidebar.expander("ℹ️ How It Works", expanded=False):
         st.markdown("""
-        **🧠 Smart Content Analysis**: Understands meaning and context, even when words are different<br>
-        **🔤 Text Pattern Matching**: Finds similar phrases and word patterns<br>
-        **📊 Exact Copy Detection**: Spots identical text that was copied<br>
-        **📈 Smart Scoring**: Combines all methods for the most accurate results
+        **📝 Text Analysis:**<br>
+        • Smart content understanding<br>
+        • Text pattern matching<br>
+        • Exact copy detection<br><br>
+        **🖼️ Image Analysis:**<br>
+        • AI-powered image comparison<br>
+        • Cross-document duplicate detection<br>
+        • Visual similarity scoring<br><br>
+        **🎯 Complete Analysis:**<br>
+        • Run both analyses together<br>
+        • Comprehensive plagiarism detection
         """)
     
     return directory
@@ -516,11 +601,14 @@ def display_exact_matches(exact_matches):
             </div>
             """, unsafe_allow_html=True)
             
-            st.markdown("**Identical Content Blocks (Page numbers only):**")
-            for j, (chunkA, chunkB, content) in enumerate(matches, 1):
+            st.markdown("**Identical Content Blocks:**")
+            
+            # Show first 3 matches by default
+            def display_match(match_data, match_num):
+                chunkA, chunkB, content = match_data
                 st.markdown(
                     f"""
-                    <div style="display: flex; align-items: center; margin-bottom: 0.5rem;">
+                    <div style="display: flex; align-items: center; margin-bottom: 1rem;">
                         <span style="background: #fef3c7; color: #b45309; font-weight: bold; border-radius: 8px; padding: 0.4rem 0.8rem; margin-right: 1rem;">
                             📄 {pdfA_short} Page {chunkA+1}
                         </span>
@@ -533,11 +621,43 @@ def display_exact_matches(exact_matches):
                     unsafe_allow_html=True
                 )
                 
-                if j >= 5:
-                    remaining = len(matches) - 5
-                    if remaining > 0:
-                        st.info(f"... and {remaining} more identical blocks")
-                    break
+                # Show the actual matched content
+                if content and len(content.strip()) > 0:
+                    # Truncate long content for better display
+                    display_content = content.strip()
+                    if len(display_content) > 300:
+                        display_content = display_content[:300] + "..."
+                    
+                    st.markdown(
+                        f"""
+                        <div style="background: #f8fafc; border-left: 4px solid #3b82f6; padding: 1rem; margin: 0.5rem 0 1rem 0; border-radius: 4px; color: #1f2937;">
+                            <strong style="color: #374151;">📝 Matched Text:</strong><br>
+                            <em style="color: #4b5563; font-size: 0.95rem; line-height: 1.5;">"{display_content}"</em>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+                else:
+                    st.markdown(
+                        """
+                        <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 0.5rem; margin: 0.5rem 0 1rem 0; border-radius: 4px; font-style: italic; color: #92400e;">
+                            ⚠️ Content preview not available
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+            
+            # Display first 3 matches
+            for j, match in enumerate(matches[:3], 1):
+                display_match(match, j)
+            
+            # If there are more than 3 matches, show them in an expander
+            if len(matches) > 3:
+                remaining_matches = matches[3:]
+                with st.expander(f"🔍 Show {len(remaining_matches)} more identical blocks", expanded=False):
+                    for j, match in enumerate(remaining_matches, 4):
+                        display_match(match, j)
+                        st.markdown("---")  # Add separator between matches
 
 
 def create_pdf_image_extractor():
@@ -592,29 +712,37 @@ def run_image_analysis(directory):
         try:
             # Use context manager for automatic cleanup
             with create_pdf_image_extractor() as extractor:
-                pdf_files = [f for f in os.listdir(directory) if f.lower().endswith('.pdf')]
-                total_pdfs = len(pdf_files)
-                
-                if total_pdfs == 0:
-                    st.error("No PDF files found in the directory.")
+                # Use the same PDF discovery logic as text analysis (recursive search)
+                try:
+                    pdf_file_paths = find_pdf_files(directory)
+                    pdf_files = [os.path.basename(path) for path in pdf_file_paths]
+                    total_pdfs = len(pdf_files)
+                    
+                    if total_pdfs == 0:
+                        st.error("No PDF files found in the directory.")
+                        return
+                    
+                    st.success(f"✅ Found {total_pdfs} PDF files for image analysis")
+                except Exception as e:
+                    st.error(f"Error finding PDF files: {str(e)}")
                     return
                 
                 all_results = []
                 st.session_state.image_analysis_logs = []
                 
                 # Extract images from all PDFs
-                for i, pdf_file in enumerate(pdf_files, 1):
+                for i, pdf_path in enumerate(pdf_file_paths, 1):
                     with img_spinner_placeholder:
                         st.markdown('<div class="spinner-container"><div class="spinner spinner-processing"></div></div>', unsafe_allow_html=True)
                         
-                    pdf_path = os.path.join(directory, pdf_file)
+                    pdf_filename = os.path.basename(pdf_path)
                     results = extractor.extract_images_from_pdf(pdf_path)
                     all_results.extend(results)
                     
                     progress_bar.progress(i / total_pdfs * 0.8)  # 80% for extraction
-                    progress_text.markdown(f"📄 Looking for images in document {i}/{total_pdfs}: {pdf_file}")
+                    progress_text.markdown(f"📄 Looking for images in document {i}/{total_pdfs}: {pdf_filename}")
                     
-                    log_msg = f"📸 Found {len(results)} images in {pdf_file}"
+                    log_msg = f"📸 Found {len(results)} images in {pdf_filename}"
                     st.session_state.image_analysis_logs.append(log_msg)
                     st.markdown(log_msg)
                 
@@ -952,17 +1080,20 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 🎮 Analysis Controls")
     
-    # Text Analysis Section
+    # Analysis Options Section
     if directory and os.path.exists(directory):
+        st.sidebar.markdown("### 📝 Text Analysis")
+        
+        # Text Analysis Controls
         if not st.session_state.text_analysis_complete:
-            if st.sidebar.button("🚀 Start Document Analysis", type="primary"):
+            if st.sidebar.button("🚀 Start Text Analysis", type="primary"):
                 semantic_scores, sequence_scores, exact_matches = run_text_analysis(directory)
                 if semantic_scores is not None:
                     st.session_state.text_analysis_complete = True
                     st.rerun()  # Refresh to show results
         else:
-            st.sidebar.success("✅ Document Analysis Complete")
-            if st.sidebar.button("🔄 Analyze Documents Again"):
+            st.sidebar.success("✅ Text Analysis Complete")
+            if st.sidebar.button("🔄 Analyze Text Again"):
                 st.session_state.text_analysis_complete = False
                 st.session_state.semantic_scores = None
                 st.session_state.sequence_scores = None
@@ -971,28 +1102,65 @@ def main():
         
         # Image Analysis Section
         st.sidebar.markdown("---")
-        if st.session_state.text_analysis_complete:
-            if not st.session_state.image_analysis_started:
-                if st.sidebar.button("🖼️ Check Images Too", type="secondary"):
+        st.sidebar.markdown("### 🖼️ Image Analysis")
+        
+        if not st.session_state.image_analysis_started:
+            if st.sidebar.button("🖼️ Start Image Analysis", type="secondary"):
+                st.session_state.image_analysis_started = True
+                st.rerun()
+        elif not st.session_state.image_analysis_complete:
+            st.sidebar.info("🔄 Analyzing Images...")
+        else:
+            st.sidebar.success("✅ Image Analysis Complete")
+            if st.sidebar.button("🔄 Analyze Images Again"):
+                st.session_state.image_analysis_started = False
+                st.session_state.image_analysis_complete = False
+                st.session_state.image_analysis_logs = []
+                st.session_state.duplicate_image_pairs = []
+                st.rerun()
+        
+        # Combined Analysis Option
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("### 🚀 Complete Analysis")
+        
+        if not st.session_state.text_analysis_complete and not st.session_state.image_analysis_started:
+            if st.sidebar.button("🎯 Analyze Both Text & Images", type="primary"):
+                # Start text analysis first
+                semantic_scores, sequence_scores, exact_matches = run_text_analysis(directory)
+                if semantic_scores is not None:
+                    st.session_state.text_analysis_complete = True
+                    # Then start image analysis
                     st.session_state.image_analysis_started = True
                     st.rerun()
-            elif not st.session_state.image_analysis_complete:
-                st.sidebar.info("🔄 Checking Images...")
-            else:
-                st.sidebar.success("✅ Image Check Complete")
-                if st.sidebar.button("🔄 Check Images Again"):
-                    st.session_state.image_analysis_started = False
-                    st.session_state.image_analysis_complete = False
-                    st.session_state.image_analysis_logs = []
-                    st.session_state.duplicate_image_pairs = []
+        elif st.session_state.text_analysis_complete and not st.session_state.image_analysis_started:
+            if st.sidebar.button("🖼️ Add Image Analysis", type="secondary"):
+                st.session_state.image_analysis_started = True
+                st.rerun()
+        elif not st.session_state.text_analysis_complete and st.session_state.image_analysis_complete:
+            if st.sidebar.button("📝 Add Text Analysis", type="secondary"):
+                semantic_scores, sequence_scores, exact_matches = run_text_analysis(directory)
+                if semantic_scores is not None:
+                    st.session_state.text_analysis_complete = True
                     st.rerun()
-        else:
-            st.sidebar.info("📝 Analyze documents first, then check images")
+        elif st.session_state.text_analysis_complete and st.session_state.image_analysis_complete:
+            st.sidebar.success("🎉 Complete Analysis Done!")
+            if st.sidebar.button("🔄 Start Fresh Analysis"):
+                # Reset everything
+                st.session_state.text_analysis_complete = False
+                st.session_state.image_analysis_started = False
+                st.session_state.image_analysis_complete = False
+                st.session_state.semantic_scores = None
+                st.session_state.sequence_scores = None
+                st.session_state.exact_matches = None
+                st.session_state.image_analysis_logs = []
+                st.session_state.duplicate_image_pairs = []
+                st.rerun()
     
     # Main content area
     if directory and os.path.exists(directory):
         # Display text analysis results if completed
         if st.session_state.text_analysis_complete and st.session_state.semantic_scores is not None:
+            st.markdown("## 📝 Text Similarity Analysis Results")
             create_similarity_overview_charts(
                 st.session_state.semantic_scores, 
                 st.session_state.sequence_scores, 
@@ -1003,45 +1171,70 @@ def main():
                 st.session_state.sequence_scores
             )
             display_exact_matches(st.session_state.exact_matches)
-            
-            # Image analysis section
-            if st.session_state.image_analysis_started:
-                st.markdown("---")
-                st.markdown("## 🖼️ Image Similarity Detection")
-                run_image_analysis(directory)
         
-        elif not st.session_state.text_analysis_complete:
-            # Welcome message when no analysis has been run
+        # Display image analysis section if started (independent of text analysis)
+        if st.session_state.image_analysis_started:
+            if st.session_state.text_analysis_complete:
+                st.markdown("---")  # Add separator if both analyses are shown
+            st.markdown("## 🖼️ Image Similarity Detection")
+            run_image_analysis(directory)
+        
+        # Welcome message when no analysis has been run
+        if not st.session_state.text_analysis_complete and not st.session_state.image_analysis_started:
             st.markdown("""
             <div class="info-card">
                 <h3>👋 Ready to Check Your Documents for Similarities!</h3>
-                <p><strong>What this tool will do for you:</strong></p>
+                <p><strong>Choose your analysis type:</strong></p>
                 <ul>
-                    <li>🧠 <strong>Smart Content Analysis:</strong> Understands what your documents mean, not just matching words</li>
-                    <li>🔤 <strong>Text Pattern Matching:</strong> Finds similar phrases and sentences</li>
-                    <li>📊 <strong>Copy Detection:</strong> Spots identical content that may have been copied</li>
-                    <li>🖼️ <strong>Image Comparison:</strong> Finds duplicate or similar images across your documents</li>
-                    <li>📈 <strong>Easy-to-Read Reports:</strong> Clear charts and summaries you can understand</li>
+                    <li>🧠 <strong>Text Analysis:</strong> Smart content analysis, pattern matching, and copy detection</li>
+                    <li>🖼️ <strong>Image Analysis:</strong> Find duplicate or similar images across documents</li>
+                    <li>🎯 <strong>Complete Analysis:</strong> Both text and image analysis for comprehensive results</li>
                 </ul>
-                <p>👈 <strong>Get started:</strong> Click 'Start Document Analysis' in the sidebar!</p>
+                <p>👈 <strong>Get started:</strong> Choose an analysis option in the sidebar!</p>
             </div>
             """, unsafe_allow_html=True)
             
-            # Show sample dashboard
-            st.markdown("### 📊 Sample Analysis Dashboard")
-            st.info("Your analysis results will appear here after processing!")
+            # Show analysis options info
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("""
+                <div class="metric-card">
+                    <h3 style="color: #3b82f6;">📝 Text Analysis</h3>
+                    <p><strong>What it finds:</strong></p>
+                    <ul style="text-align: left; font-size: 0.9rem;">
+                        <li>Similar content meaning</li>
+                        <li>Matching text patterns</li>
+                        <li>Exact copied text</li>
+                        <li>Similarity scores & charts</li>
+                    </ul>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col2:
+                st.markdown("""
+                <div class="metric-card">
+                    <h3 style="color: #8b5cf6;">🖼️ Image Analysis</h3>
+                    <p><strong>What it finds:</strong></p>
+                    <ul style="text-align: left; font-size: 0.9rem;">
+                        <li>Duplicate images</li>
+                        <li>Similar visual content</li>
+                        <li>Cross-document matches</li>
+                        <li>AI-powered comparison</li>
+                    </ul>
+                </div>
+                """, unsafe_allow_html=True)
     
     else:
         # No directory selected or invalid directory
         st.markdown("""
         <div class="info-card">
             <h3>👋 Welcome to Smart Document Analyzer!</h3>
-            <p><strong>What this tool does:</strong></p>
+            <p><strong>Flexible Analysis Options:</strong></p>
             <ul>
-                <li>🧠 <strong>AI Content Analysis:</strong> Understands document meaning and context</li>
-                <li>🔤 <strong>Text Matching:</strong> Finds identical phrases and sentences</li>
-                <li>📊 <strong>Duplicate Detection:</strong> Identifies exact content blocks</li>
-                <li>🖼️ <strong>Image Analysis:</strong> Detects duplicate images across documents</li>
+                <li>📝 <strong>Text Analysis:</strong> AI content analysis, pattern matching, and duplicate detection</li>
+                <li>🖼️ <strong>Image Analysis:</strong> Find duplicate images across your documents</li>
+                <li>🎯 <strong>Complete Analysis:</strong> Run both text and image analysis together</li>
                 <li>📈 <strong>Visual Reports:</strong> Easy-to-understand charts and summaries</li>
             </ul>
             <p>👈 <strong>Get started:</strong> Enter your PDF folder path in the sidebar!</p>

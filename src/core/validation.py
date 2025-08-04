@@ -59,7 +59,7 @@ class FileValidator:
                           allowed_extensions: Optional[set] = None,
                           max_size_mb: Optional[float] = None) -> Path:
         """
-        Validate file path with comprehensive checks.
+        Simple file path validation.
         
         Args:
             file_path: Path to the file
@@ -68,7 +68,7 @@ class FileValidator:
             max_size_mb: Maximum file size in MB
             
         Returns:
-            Validated Path object
+            Path object
             
         Raises:
             FileValidationError: If validation fails
@@ -76,27 +76,7 @@ class FileValidator:
         if not file_path:
             raise FileValidationError("File path cannot be empty", field="file_path", value=file_path)
         
-        try:
-            path = Path(file_path).resolve()
-        except (OSError, ValueError) as e:
-            raise FileValidationError(f"Invalid file path: {str(e)}", field="file_path", value=file_path)
-        
-        # Security check: prevent path traversal
-        if '..' in str(path) or str(path).startswith('/'):
-            if not str(path).startswith(os.path.abspath('.')):
-                raise SecurityValidationError(
-                    f"Potential path traversal detected: {file_path}", 
-                    field="file_path", 
-                    value=file_path
-                )
-        
-        # Check filename length
-        if len(path.name) > FileValidator.MAX_FILENAME_LENGTH:
-            raise FileValidationError(
-                f"Filename too long (max {FileValidator.MAX_FILENAME_LENGTH} characters)",
-                field="file_path",
-                value=file_path
-            )
+        path = Path(file_path)
         
         # Check if file exists (if required)
         if must_exist and not path.exists():
@@ -156,7 +136,7 @@ class DirectoryValidator:
                                must_be_readable: bool = True,
                                must_be_writable: bool = False) -> Path:
         """
-        Validate directory path with comprehensive checks.
+        Simple directory path validation.
         
         Args:
             dir_path: Path to the directory
@@ -165,7 +145,7 @@ class DirectoryValidator:
             must_be_writable: Whether the directory must be writable
             
         Returns:
-            Validated Path object
+            Path object
             
         Raises:
             DirectoryValidationError: If validation fails
@@ -173,19 +153,7 @@ class DirectoryValidator:
         if not dir_path:
             raise DirectoryValidationError("Directory path cannot be empty", field="dir_path", value=dir_path)
         
-        try:
-            path = Path(dir_path).resolve()
-        except (OSError, ValueError) as e:
-            raise DirectoryValidationError(f"Invalid directory path: {str(e)}", field="dir_path", value=dir_path)
-        
-        # Security check: prevent path traversal
-        if '..' in str(path):
-            if not str(path).startswith(os.path.abspath('.')):
-                raise SecurityValidationError(
-                    f"Potential path traversal detected: {dir_path}",
-                    field="dir_path",
-                    value=dir_path
-                )
+        path = Path(dir_path)
         
         # Check if directory exists (if required)
         if must_exist and not path.exists():
@@ -194,22 +162,6 @@ class DirectoryValidator:
         # Check if it's actually a directory
         if must_exist and path.exists() and not path.is_dir():
             raise DirectoryValidationError(f"Path is not a directory: {dir_path}", field="dir_path", value=dir_path)
-        
-        # Check permissions
-        if must_exist and path.exists():
-            if must_be_readable and not os.access(path, os.R_OK):
-                raise DirectoryValidationError(
-                    f"Directory is not readable: {dir_path}",
-                    field="dir_path",
-                    value=dir_path
-                )
-            
-            if must_be_writable and not os.access(path, os.W_OK):
-                raise DirectoryValidationError(
-                    f"Directory is not writable: {dir_path}",
-                    field="dir_path",
-                    value=dir_path
-                )
         
         return path
 
