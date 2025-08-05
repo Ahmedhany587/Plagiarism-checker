@@ -3,17 +3,16 @@ import uuid
 import shutil
 import logging
 import tempfile
-import atexit
 from io import BytesIO
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Union
+from contextlib import contextmanager
 
 import fitz  # PyMuPDF
 from PIL import Image
 import numpy as np
 import imagehash
 import matplotlib.pyplot as plt
-# FiftyOne imports moved to image_duplication_detector.py
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -26,53 +25,85 @@ class PDFImageExtractor:
 
     def __init__(
         self,
-        out_dir: Optional[str] = None,
+        out_dir: Optional[Union[str, Path]] = None,
         min_byte_size: int = 1024,
         min_width: int = 50,
         min_height: int = 50,
         std_threshold: float = 10.0,
     ):
-        # Use temporary directory if no output directory specified
-        if out_dir is None:
-            self.temp_dir = tempfile.mkdtemp(prefix="pdf_images_")
-            self.out_dir = Path(self.temp_dir)
-            self.is_temp = True
-            # Register cleanup function
-            atexit.register(self.cleanup)
-        else:
-            self.out_dir = Path(out_dir)
-            self.is_temp = False
-            self.temp_dir = None
-            
+        self._out_dir_path = Path(out_dir) if out_dir else None
+        self._temp_dir_manager = None
+        self.out_dir = None
+        
         self.min_byte_size = min_byte_size
         self.min_width = min_width
         self.min_height = min_height
         self.std_threshold = std_threshold
         self.seen_hashes = set()
 
-        # Only clear directory if it's not a temp dir (temp dirs are created fresh)
-        if not self.is_temp and self.out_dir.exists():
-            shutil.rmtree(self.out_dir)
-            
-        self.out_dir.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Using {'temporary' if self.is_temp else 'permanent'} directory: {self.out_dir}")
-
-    def cleanup(self):
-        """Clean up temporary directory if created."""
-        if self.is_temp and self.temp_dir and os.path.exists(self.temp_dir):
-            try:
-                shutil.rmtree(self.temp_dir)
-                logger.info(f"Cleaned up temporary directory: {self.temp_dir}")
-            except Exception as e:
-                logger.warning(f"Failed to clean up temporary directory {self.temp_dir}: {e}")
-
     def __enter__(self):
-        """Context manager entry."""
+        """Context manager entry - sets up output directory."""
+        if self._out_dir_path:
+            # Use specified directory
+            self.out_dir = self._out_dir_path
+            if self.out_dir.exists():
+                shutil.rmtree(self.out_dir)
+            self.out_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Using permanent directory: {self.out_dir}")
+        else:
+            # Use temporary directory with automatic cleanup
+            self._temp_dir_manager = tempfile.TemporaryDirectory(prefix="pdf_images_")
+            self.out_dir = Path(self._temp_dir_manager.name)
+            logger.info(f"Using temporary directory: {self.out_dir}")
+        
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit - cleanup temp directory."""
-        self.cleanup()
+        """Context manager exit - cleanup temp directory if needed."""
+        if self._temp_dir_manager:
+            self._temp_dir_manager.cleanup()
+            logger.info(f"Cleaned up temporary directory: {self.out_dir}")
+            self._temp_dir_manager = None
+        self.out_dir = None
+
+    @classmethod
+    @contextmanager
+    def create_temp_extractor(
+        cls,
+        min_byte_size: int = 1024,
+        min_width: int = 50,
+        min_height: int = 50,
+        std_threshold: float = 10.0,
+    ):
+        """Convenience context manager factory for temporary extraction."""
+        with cls(
+            out_dir=None,
+            min_byte_size=min_byte_size,
+            min_width=min_width,
+            min_height=min_height,
+            std_threshold=std_threshold,
+        ) as extractor:
+            yield extractor
+
+    @classmethod
+    @contextmanager
+    def create_permanent_extractor(
+        cls,
+        out_dir: Union[str, Path],
+        min_byte_size: int = 1024,
+        min_width: int = 50,
+        min_height: int = 50,
+        std_threshold: float = 10.0,
+    ):
+        """Convenience context manager factory for permanent directory extraction."""
+        with cls(
+            out_dir=out_dir,
+            min_byte_size=min_byte_size,
+            min_width=min_width,
+            min_height=min_height,
+            std_threshold=std_threshold,
+        ) as extractor:
+            yield extractor
 
     def is_image_relevant(self, image_bytes: bytes) -> bool:
         """Determines whether an image is relevant based on size and visual content."""
@@ -97,6 +128,9 @@ class PDFImageExtractor:
 
     def extract_images_from_pdf(self, pdf_path: str) -> List[dict]:
         """Extracts relevant and unique images from a given PDF file."""
+        if self.out_dir is None:
+            raise RuntimeError("PDFImageExtractor must be used as a context manager. Use 'with PDFImageExtractor(...) as extractor:'")
+        
         results = []
         if not os.path.isfile(pdf_path):
             logger.warning(f"PDF not found, skipping: {pdf_path}")

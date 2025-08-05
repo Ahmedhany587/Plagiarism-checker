@@ -1,153 +1,149 @@
-import logging
+import os
 from pathlib import Path
-from typing import List, Optional, Callable
+from typing import List, Dict, Optional
 
-import fiftyone as fo
-import fiftyone.brain as fob
-
-# Configure logging
-logger = logging.getLogger(__name__)
+from PIL import Image
+import imagehash
 
 
 class ImageDuplicationDetector:
-    """Handles image duplication detection using FiftyOne and CLIP embeddings."""
-    
-    def __init__(self, dataset_name: str = "image_duplicates"):
-        self.dataset_name = dataset_name
-        self.dataset = None
+    """
+    Detects duplicate images across PDFs using perceptual hashing.
+    Fast, reliable, and efficient duplicate detection.
+    """
+
+    def __init__(self):
+        """Initialize the image duplication detector."""
+        # Storage for metadata
+        self.filepaths: List[str] = []
+        self.pdf_names: List[str] = []
+        self._images: List[Image.Image] = []
+
+    def load_images(self, results: List[Dict[str, str]]):
+        """
+        Load images and their PDF origin metadata.
+        results: list of {"filepath": str, "pdf": str}
+        """
+        self.filepaths = []
+        self.pdf_names = []
+        images = []
         
-    def build_dataset_from_results(self, results: List[dict]) -> fo.Dataset:
-        """Creates a FiftyOne dataset from extracted images and stores PDF origin."""
-        if fo.dataset_exists(self.dataset_name):
-            fo.delete_dataset(self.dataset_name)
-
-        self.dataset = fo.Dataset(self.dataset_name)
-        samples = [fo.Sample(filepath=r["filepath"], pdf_name=r["pdf"]) for r in results]
-        self.dataset.add_samples(samples)
-
-        logger.info(f"Dataset '{self.dataset_name}' created with {len(samples)} images.")
-        return self.dataset
+        print(f"Loading {len(results)} images for analysis...")
+        
+        for i, r in enumerate(results):
+            fp = r["filepath"]
+            if not os.path.isfile(fp):
+                print(f"Skipping missing file: {fp}")
+                continue
+                
+            try:
+                img = Image.open(fp).convert("RGB")
+                images.append(img)
+                self.filepaths.append(fp)
+                self.pdf_names.append(r["pdf"])
+                
+                if (i + 1) % 50 == 0:  # Progress update every 50 images
+                    print(f"Loaded {i + 1}/{len(results)} images...")
+                    
+            except Exception as e:
+                print(f"Failed to load image {fp}: {str(e)}")
+                continue
+        
+        self._images = images
+        print(f"Successfully loaded {len(self._images)} images for analysis")
 
     def detect_cross_pdf_duplicates(
-        self, 
-        dataset: Optional[fo.Dataset] = None,
-        brain_key: str = "similarity_index",
-        threshold: float = 0.8,
-        progress_callback: Optional[Callable] = None
-    ) -> Optional[List[dict]]:
-        """Detects image duplicates across different PDF documents using CLIP embeddings."""
-        if dataset is None:
-            dataset = self.dataset
-            
-        if dataset is None:
-            raise ValueError("No dataset available. Call build_dataset_from_results first or provide a dataset.")
-            
-        if dataset.has_brain_run(brain_key):
-            dataset.delete_brain_run(brain_key)
-
-        # Notify about embedding start
-        if progress_callback:
-            progress_callback("starting", 0, len(dataset), "Initializing CLIP model...")
+        self,
+        threshold: float = 0.85
+    ) -> Optional[List[Dict[str, object]]]:
+        """
+        Finds duplicate image pairs across different PDFs using perceptual hashing.
         
-        # Compute embeddings with progress tracking
-        try:
-            index = fob.compute_similarity(dataset, model="clip-vit-base32-torch", brain_key=brain_key, backend="sklearn")
-            
-            # Notify embedding completion
-            if progress_callback:
-                progress_callback("embedding_complete", len(dataset), len(dataset), "Computing similarity matrix...")
+        Args:
+            threshold: Similarity threshold (0.0-1.0). Higher values = more strict matching.
+                      0.85 is good for near-identical images.
+                      0.75 is good for very similar images.
+                      0.65 is good for somewhat similar images.
+        
+        Returns:
+            List of duplicate pairs with similarity scores, or None if no duplicates found.
+        """
+        if not hasattr(self, '_images') or not self._images:
+            raise RuntimeError("No images loaded. Call load_images() first.")
+        
+        print(f"Computing perceptual hashes for {len(self._images)} images...")
+        
+        # Compute perceptual hashes
+        hashes = []
+        for i, img in enumerate(self._images):
+            try:
+                # Use perceptual hash (good for finding similar images)
+                phash = imagehash.phash(img, hash_size=8)
+                hashes.append(phash)
                 
-        except Exception as e:
-            if progress_callback:
-                progress_callback("error", 0, len(dataset), f"Embedding failed: {str(e)}")
-            raise
+                if (i + 1) % 50 == 0:  # Progress update
+                    print(f"Computed hashes for {i + 1}/{len(self._images)} images...")
+                    
+            except Exception as e:
+                print(f"Failed to hash image {i}: {str(e)}")
+                hashes.append(None)
         
-        # Find duplicates
-        if progress_callback:
-            progress_callback("finding_duplicates", len(dataset), len(dataset), "Finding duplicate pairs...")
+        print(f"Finding duplicate pairs with threshold {threshold}...")
         
-        index.find_duplicates(thresh=threshold)
+        # Find similar hashes
+        pairs = []
+        seen = set()
+        comparisons = 0
+        total_comparisons = (len(hashes) * (len(hashes) - 1)) // 2
         
-        if progress_callback:
-            progress_callback("complete", len(dataset), len(dataset), "Analysis complete!")
-
-        dup_view = index.duplicates_view(type_field="dup_type", id_field="nearest_id", dist_field="distance")
-
-        seen_pairs = set()
-        cross_pdf_pairs = []
-
-        for sample in dup_view:
-            if sample["dup_type"] != "duplicate":
+        for i in range(len(hashes)):
+            if hashes[i] is None:
                 continue
-
-            orig_id = sample["nearest_id"]
-            dup_id = sample.id
-
-            orig_pdf = dataset[orig_id]["pdf_name"]
-            dup_pdf = sample["pdf_name"]
-
-            if orig_pdf == dup_pdf:
-                continue
-
-            pair_key = tuple(sorted((orig_id, dup_id)))
-            if pair_key in seen_pairs:
-                continue
-
-            seen_pairs.add(pair_key)
-            cross_pdf_pairs.append((orig_id, dup_id, sample["distance"]))
-
-        if not cross_pdf_pairs:
-            logger.info("No cross-PDF duplicates found.")
-            return None
-
-        logger.info("Cross-PDF duplicate pairs:")
-        pairs_info = []
-        for orig_id, dup_id, dist in cross_pdf_pairs:
-            orig_sample = dataset[orig_id]
-            dup_sample = dataset[dup_id]
-            pair_info = {
-                'orig_path': orig_sample.filepath,
-                'dup_path': dup_sample.filepath,
-                'orig_pdf': orig_sample.pdf_name,
-                'dup_pdf': dup_sample.pdf_name,
-                'distance': dist,
-                'similarity': 1 - dist
-            }
-            pairs_info.append(pair_info)
-            logger.info(
-                f"{Path(orig_sample.filepath).name} ({orig_sample.pdf_name}) <-> "
-                f"{Path(dup_sample.filepath).name} ({dup_sample.pdf_name}) dist={dist:.3f}"
-            )
+                
+            for j in range(i + 1, len(hashes)):
+                comparisons += 1
+                
+                if hashes[j] is None:
+                    continue
+                
+                # Skip same PDF
+                if self.pdf_names[i] == self.pdf_names[j]:
+                    continue
+                
+                # Compute hash similarity (smaller distance = more similar)
+                hash_diff = hashes[i] - hashes[j]
+                similarity = 1.0 - (hash_diff / 64.0)  # Normalize to 0-1 scale
+                
+                if similarity >= threshold:
+                    key = (min(i, j), max(i, j))  # Ensure consistent ordering
+                    if key not in seen:
+                        seen.add(key)
+                        pairs.append({
+                            "orig_path": self.filepaths[i],
+                            "dup_path": self.filepaths[j],
+                            "orig_pdf": self.pdf_names[i],
+                            "dup_pdf": self.pdf_names[j],
+                            "similarity": float(similarity)
+                        })
+                
+                # Progress update for large datasets
+                if comparisons % 10000 == 0:
+                    print(f"Compared {comparisons}/{total_comparisons} pairs...")
         
-        return pairs_info
+        print(f"Analysis complete! Found {len(pairs)} duplicate pairs across different PDFs")
+        
+        if pairs:
+            # Sort by similarity score (highest first)
+            pairs.sort(key=lambda x: x['similarity'], reverse=True)
+            print(f"Similarity scores range: {pairs[-1]['similarity']:.2%} to {pairs[0]['similarity']:.2%}")
+        
+        return pairs if pairs else None
 
-    def cleanup_dataset(self):
-        """Clean up the FiftyOne dataset."""
-        if fo.dataset_exists(self.dataset_name):
-            fo.delete_dataset(self.dataset_name)
-            logger.info(f"Cleaned up dataset: {self.dataset_name}")
-
-
-# Backward compatibility functions for existing code
-def build_dataset_from_results(results: List[dict], dataset_name: str) -> fo.Dataset:
-    """
-    Backward compatibility function for the old interface.
-    Creates a FiftyOne dataset from extracted images and stores PDF origin.
-    """
-    detector = ImageDuplicationDetector(dataset_name)
-    return detector.build_dataset_from_results(results)
-
-
-def index_and_report_cross_pdf_duplicates(
-    dataset: fo.Dataset, 
-    brain_key: str, 
-    thresh: float, 
-    progress_callback=None
-) -> Optional[List[dict]]:
-    """
-    Backward compatibility function for the old interface.
-    Detects image duplicates across different PDF documents.
-    """
-    detector = ImageDuplicationDetector()
-    detector.dataset = dataset
-    return detector.detect_cross_pdf_duplicates(dataset, brain_key, thresh, progress_callback)
+    def clear(self):
+        """
+        Reset stored data.
+        """
+        self.filepaths = []
+        self.pdf_names = []
+        self._images = []
+        print("Cleared all stored image data")

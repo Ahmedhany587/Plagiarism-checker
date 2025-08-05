@@ -5,6 +5,10 @@ import pandas as pd
 import numpy as np
 import logging
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Import your existing modules used for text analysis
 from src.core.pdf_handler import PDFHandler, find_pdf_files
@@ -15,7 +19,7 @@ from src.core.exact_match import ExactMatchDetector
 
 # Import image extraction and duplication detection modules
 from src.utils.pdf_img_extractor import PDFImageExtractor
-from src.utils.image_duplication_detector import build_dataset_from_results, index_and_report_cross_pdf_duplicates
+from src.utils.image_duplication_detector import ImageDuplicationDetector
 
 # Import and setup production logging
 from src.core.logging_config import setup_logging
@@ -249,9 +253,10 @@ def reset_analysis_state(new_directory):
 
 
 def get_directory_input():
-    """Simple sidebar for getting PDF directory path or uploading files."""
+    """Simple sidebar for uploading PDF files as ZIP."""
     import os
     import tempfile
+    import zipfile
     
     st.sidebar.markdown("""
     <div class="sidebar-header">
@@ -259,82 +264,42 @@ def get_directory_input():
     </div>
     """, unsafe_allow_html=True)
     
-    # Add tabs for different input methods
-    tab1, tab2 = st.sidebar.tabs(["📁 Server Path", "📤 Upload Files"])
+    st.sidebar.markdown("### 📤 Upload Your PDFs")
+    st.sidebar.markdown("**Upload as ZIP file containing your PDF documents**")
     
-    with tab1:
-        st.markdown("### 📁 Server Directory")
-        directory = st.text_input(
-            "📂 Enter Server Directory Path", 
-            value=st.session_state.current_directory or "",
-            help="Enter the full path to PDFs on the server",
-            placeholder="/app/pdfs or ./pdfs"
-        )
+    zip_file = st.sidebar.file_uploader(
+        "📁 Choose ZIP file containing PDFs", 
+        type="zip",
+        help="Create a ZIP file with all your PDF documents and upload it here"
+    )
     
-    with tab2:
-        st.markdown("### 📤 Upload Directory")
+    directory = None
+    
+    if zip_file:
+        # Create temporary directory for extracted files
+        if 'upload_dir' not in st.session_state:
+            st.session_state.upload_dir = tempfile.mkdtemp(prefix="uploaded_pdfs_")
         
-        # Option 1: Zip file upload (recommended for directories)
-        st.markdown("**Option 1: Upload as ZIP file** (Recommended)")
-        zip_file = st.file_uploader(
-            "Upload ZIP file containing PDFs", 
-            type="zip",
-            help="Zip your PDF directory and upload it here"
-        )
+        upload_dir = st.session_state.upload_dir
         
-        if zip_file:
-            import zipfile
-            # Create temporary directory for extracted files
-            if 'upload_dir' not in st.session_state:
-                st.session_state.upload_dir = tempfile.mkdtemp(prefix="uploaded_pdfs_")
+        # Extract zip file
+        try:
+            with zipfile.ZipFile(zip_file, 'r') as zip_ref:
+                zip_ref.extractall(upload_dir)
             
-            upload_dir = st.session_state.upload_dir
+            # Count PDF files in extracted directory
+            pdf_count = 0
+            for root, dirs, files in os.walk(upload_dir):
+                pdf_count += len([f for f in files if f.lower().endswith('.pdf')])
             
-            # Extract zip file
-            try:
-                with zipfile.ZipFile(zip_file, 'r') as zip_ref:
-                    zip_ref.extractall(upload_dir)
-                
-                # Count PDF files in extracted directory
-                pdf_count = 0
-                for root, dirs, files in os.walk(upload_dir):
-                    pdf_count += len([f for f in files if f.lower().endswith('.pdf')])
-                
-                directory = upload_dir
-                st.success(f"✅ Extracted ZIP file with {pdf_count} PDF files")
-                
-            except Exception as e:
-                st.error(f"❌ Error extracting ZIP file: {str(e)}")
-                directory = None
-        else:
-            # Option 2: Multiple file selection
-            st.markdown("**Option 2: Select all PDFs from your directory**")
-            uploaded_files = st.file_uploader(
-                "Select all PDF files from your directory", 
-                type="pdf", 
-                accept_multiple_files=True,
-                help="Hold Ctrl/Cmd and select all PDFs from your directory"
-            )
+            directory = upload_dir
+            st.sidebar.success(f"✅ Extracted ZIP file with {pdf_count} PDF files")
             
-            if uploaded_files:
-                # Create temporary directory for uploaded files
-                if 'upload_dir' not in st.session_state:
-                    st.session_state.upload_dir = tempfile.mkdtemp(prefix="uploaded_pdfs_")
-                
-                upload_dir = st.session_state.upload_dir
-                
-                # Save uploaded files
-                for uploaded_file in uploaded_files:
-                    file_path = os.path.join(upload_dir, uploaded_file.name)
-                    with open(file_path, "wb") as f:
-                        f.write(uploaded_file.getbuffer())
-                
-                directory = upload_dir
-                st.success(f"✅ Uploaded {len(uploaded_files)} PDF files")
-            else:
-                directory = None
+        except Exception as e:
+            st.sidebar.error(f"❌ Error extracting ZIP file: {str(e)}")
+            directory = None
     
-    # Simple directory check
+    # Directory check and state management
     if directory != st.session_state.current_directory and directory:
         if os.path.exists(directory):
             reset_analysis_state(directory)
@@ -354,7 +319,7 @@ def get_directory_input():
         if file_count > 0:
             st.sidebar.markdown(f"""
             <div class="success-card">
-                ✅ <strong>Folder Found!</strong><br>
+                ✅ <strong>ZIP Extracted Successfully!</strong><br>
                 📊 Found {file_count} PDF files<br>
                 📁 Ready for analysis
             </div>
@@ -362,36 +327,36 @@ def get_directory_input():
             
             with st.sidebar.expander("📋 Files Found", expanded=False):
                 for i, file in enumerate(pdf_files[:10], 1):
-                    st.write(f"{i}. {file}")
+                    st.sidebar.write(f"{i}. {file}")
                 if file_count > 10:
-                    st.write(f"... and {file_count - 10} more files")
+                    st.sidebar.write(f"... and {file_count - 10} more files")
         else:
             st.sidebar.markdown("""
             <div class="warning-card">
                 ⚠️ <strong>No PDF Files Found</strong><br>
-                The folder exists but contains no PDF files.
+                The ZIP file contains no PDF files.
             </div>
             """, unsafe_allow_html=True)
-    elif directory:
-        st.sidebar.markdown("""
-        <div class="warning-card">
-            ❌ <strong>Folder Not Found</strong><br>
-            Please check the path and try again.
-        </div>
-        """, unsafe_allow_html=True)
     
-    with st.sidebar.expander("ℹ️ How It Works", expanded=False):
-        st.markdown("""
-        **📝 Text Analysis:**<br>
-        • Smart content understanding<br>
-        • Text pattern matching<br>
-        • Exact copy detection<br><br>
-        **🖼️ Image Analysis:**<br>
-        • AI-powered image comparison<br>
-        • Cross-document duplicate detection<br>
-        • Visual similarity scoring<br><br>
-        **🎯 Complete Analysis:**<br>
-        • Run both analyses together<br>
+    with st.sidebar.expander("ℹ️ How to Use", expanded=False):
+        st.sidebar.markdown("""
+        **📁 Prepare Your Files:**
+        • Put all PDF documents in a folder
+        • Create a ZIP file of that folder
+        • Upload the ZIP file above
+        
+        **📝 Text Analysis:**
+        • Smart content understanding
+        • Text pattern matching
+        • Exact copy detection
+        
+        **🖼️ Image Analysis:**
+        • Perceptual hash comparison
+        • Cross-document duplicate detection
+        • Fast similarity scoring
+        
+        **🎯 Complete Analysis:**
+        • Run both analyses together
         • Comprehensive plagiarism detection
         """)
     
@@ -751,23 +716,24 @@ def run_image_analysis(directory):
                     st.session_state.image_analysis_complete = True
                     return
             
-                # Create dataset and analyze similarities
+                # Initialize the image duplication detector
                 with img_spinner_placeholder:
                     st.markdown('<div class="spinner-container"><div class="spinner spinner-analyzing"></div></div>', unsafe_allow_html=True)
-                progress_text.markdown("📊 Organizing found images...")
+                progress_text.markdown("📊 Setting up perceptual hash analysis...")
                 progress_bar.progress(0.85)
                 
-                dataset_name = f"imgs_{uuid.uuid4().hex[:8]}"
-                dataset = build_dataset_from_results(all_results, dataset_name)
+                # Initialize detector and load images
+                detector = ImageDuplicationDetector()
+                detector.load_images(all_results)
                 
                 # Enhanced embedding progress display
                 embedding_container = st.container()
                 with embedding_container:
                     st.markdown("""
                     <div style="padding: 1rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 10px; margin: 1rem 0; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
-                        <h4 style="color: #ffffff; margin: 0; font-weight: bold; text-shadow: 1px 1px 2px rgba(0,0,0,0.3);">🎨 Teaching AI to Understand Your Images</h4>
+                        <h4 style="color: #ffffff; margin: 0; font-weight: bold; text-shadow: 1px 1px 2px rgba(0,0,0,0.3);">🔍 Analyzing Image Fingerprints</h4>
                         <p style="color: #ffffff; margin: 0.5rem 0 0 0; font-size: 0.9rem; opacity: 0.95; text-shadow: 1px 1px 2px rgba(0,0,0,0.2);">
-                            Using advanced AI to analyze what's in each image...
+                            Using perceptual hashing to find duplicate and similar images...
                         </p>
                     </div>
                     """, unsafe_allow_html=True)
@@ -821,14 +787,18 @@ def run_image_analysis(directory):
                         embedding_status.markdown(f"❌ **Something went wrong...**")
                         embedding_details.error("Could not analyze images. Please try again or check your files.")
                 
-                # Run the embedding computation with progress tracking
+                # Run the hash-based duplicate detection
                 try:
-                    pairs_info = index_and_report_cross_pdf_duplicates(
-                        dataset, 
-                        brain_key="cross_pdf", 
-                        thresh=0.2,
-                        progress_callback=embedding_progress_callback
-                    )
+                    # Manual progress updates
+                    embedding_progress_callback("starting", 0, len(all_results), "Starting analysis")
+                    
+                    st.info("🔍 Analyzing image fingerprints for duplicates...")
+                    embedding_progress_callback("finding_duplicates", 0, 0, "Computing perceptual hashes")
+                    
+                    # Find duplicates using perceptual hashing (threshold 0.85 for high confidence)
+                    pairs_info = detector.detect_cross_pdf_duplicates(threshold=0.85)
+                    
+                    embedding_progress_callback("complete", 0, 0, "Analysis complete")
                     
                     # Small delay to show completion status
                     import time
@@ -1184,7 +1154,7 @@ def main():
             st.markdown("""
             <div class="info-card">
                 <h3>👋 Ready to Check Your Documents for Similarities!</h3>
-                <p><strong>Choose your analysis type:</strong></p>
+                <p><strong>Your ZIP file has been uploaded successfully! Choose your analysis type:</strong></p>
                 <ul>
                     <li>🧠 <strong>Text Analysis:</strong> Smart content analysis, pattern matching, and copy detection</li>
                     <li>🖼️ <strong>Image Analysis:</strong> Find duplicate or similar images across documents</li>
@@ -1220,29 +1190,30 @@ def main():
                         <li>Duplicate images</li>
                         <li>Similar visual content</li>
                         <li>Cross-document matches</li>
-                        <li>AI-powered comparison</li>
+                        <li>Fast hash-based comparison</li>
                     </ul>
                 </div>
                 """, unsafe_allow_html=True)
     
     else:
-        # No directory selected or invalid directory
+        # No ZIP file uploaded
         st.markdown("""
         <div class="info-card">
             <h3>👋 Welcome to Smart Document Analyzer!</h3>
-            <p><strong>Flexible Analysis Options:</strong></p>
+            <p><strong>Analysis Options:</strong></p>
             <ul>
                 <li>📝 <strong>Text Analysis:</strong> AI content analysis, pattern matching, and duplicate detection</li>
                 <li>🖼️ <strong>Image Analysis:</strong> Find duplicate images across your documents</li>
                 <li>🎯 <strong>Complete Analysis:</strong> Run both text and image analysis together</li>
                 <li>📈 <strong>Visual Reports:</strong> Easy-to-understand charts and summaries</li>
+                <li>⚡ <strong>Fast & Reliable:</strong> Efficient algorithms for accurate results</li>
             </ul>
-            <p>👈 <strong>Get started:</strong> Enter your PDF folder path in the sidebar!</p>
+            <p>👈 <strong>Get started:</strong> Upload a ZIP file containing your PDF documents in the sidebar!</p>
         </div>
         """, unsafe_allow_html=True)
         
         st.markdown("### 📊 Sample Analysis Dashboard")
-        st.info("Enter a PDF directory path to see analysis results here!")
+        st.info("Upload a ZIP file containing your PDF documents to see analysis results here!")
     
     # Footer information
     st.markdown("---")

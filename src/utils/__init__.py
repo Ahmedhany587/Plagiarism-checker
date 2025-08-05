@@ -8,15 +8,9 @@ This package contains supporting utilities:
 """
 
 from .pdf_img_extractor import PDFImageExtractor
-from .image_duplication_detector import (
-    ImageDuplicationDetector,
-    build_dataset_from_results, 
-    index_and_report_cross_pdf_duplicates
-)
+from .image_duplication_detector import ImageDuplicationDetector
 
 __all__ = [
     'PDFImageExtractor',
-    'ImageDuplicationDetector',
-    'build_dataset_from_results', 
-    'index_and_report_cross_pdf_duplicates'
+    'ImageDuplicationDetector'
 ] 
