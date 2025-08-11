@@ -77,164 +77,542 @@ def initialize_app():
     
     st.markdown("""
     <style>
-    .main-header {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 2.5rem;
-        border-radius: 15px;
-        text-align: center;
-        margin-bottom: 2rem;
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-    }
-    .main-title {
-        color: #ffffff;
-        font-size: 3.5rem;
-        font-weight: bold;
-        margin: 0;
-        text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
-    }
-    .main-subtitle {
-        color: #ffffff;
-        font-size: 1.3rem;
-        margin-top: 1rem;
-        opacity: 0.95;
-        text-shadow: 1px 1px 3px rgba(0,0,0,0.4);
-    }
-    .metric-card {
-        background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
-        padding: 2rem;
-        border-radius: 12px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-        text-align: center;
-        margin: 1rem 0;
-        border: 1px solid rgba(255,255,255,0.2);
-    }
-    .success-card {
-        background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%);
-        padding: 1.5rem;
-        border-radius: 10px;
-        margin: 1rem 0;
-        border-left: 5px solid #22c55e;
-    }
-    .warning-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
-        color: #ffffff !important;
-        border-left: 5px solid #3b82f6 !important;
-        padding: 1.5rem;
-        border-radius: 10px;
-        margin: 1rem 0;
-        text-shadow: 1px 1px 2px rgba(0,0,0,0.3) !important;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.15) !important;
-    }
-    .info-card {
-        background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
-        padding: 1.5rem;
-        border-radius: 10px;
-        margin: 1rem 0;
-        border-left: 5px solid #3b82f6;
-    }
-    .similarity-badge {
-        display: inline-block;
-        padding: 0.5rem 1rem;
-        border-radius: 25px;
-        font-weight: bold;
-        margin: 0.3rem;
-        font-size: 0.9rem;
-    }
-    .high-similarity { 
-        background: linear-gradient(135deg, #fee2e2 0%, #fca5a5 100%); 
-        color: #dc2626; 
-        border: 2px solid #ef4444;
-    }
-    .medium-similarity { 
-        background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); 
-        color: #d97706; 
-        border: 2px solid #f59e0b;
-    }
-    .low-similarity { 
-        background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%); 
-        color: #059669; 
-        border: 2px solid #10b981;
-    }
-    .match-highlight {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
-        color: #ffffff !important;
-        border-left: 4px solid #3b82f6 !important;
-        padding: 0.8rem;
-        border-radius: 8px;
-        font-weight: bold;
-        margin: 0.5rem 0;
-        text-shadow: 1px 1px 2px rgba(0,0,0,0.3) !important;
-        box-shadow: 0 4px 8px rgba(0,0,0,0.1) !important;
-    }
-    .sidebar-header {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 1.5rem;
-        border-radius: 12px;
-        color: #ffffff;
-        text-align: center;
-        margin-bottom: 1.5rem;
-        text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
-        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-    }
-    .progress-container {
-        background: #f8fafc;
-        padding: 1.5rem;
-        border-radius: 10px;
-        margin: 1rem 0;
-        border: 1px solid #e2e8f0;
+    /* Import Google Fonts for modern typography */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+    
+    /* Root variables for easy theming */
+    :root {
+        --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+        --secondary-gradient: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        --success-gradient: linear-gradient(135deg, #84fab0 0%, #8fd3f4 100%);
+        --warning-gradient: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+        --danger-gradient: linear-gradient(135deg, #ff6b6b 0%, #ffa500 100%);
+        --dark-gradient: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+        --glass-bg: rgba(255, 255, 255, 0.1);
+        --glass-border: rgba(255, 255, 255, 0.2);
+        --text-primary: #1a202c;
+        --text-secondary: #4a5568;
+        --text-light: #ffffff;
+        --shadow-sm: 0 2px 4px rgba(0,0,0,0.05);
+        --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
+        --shadow-lg: 0 10px 40px rgba(0,0,0,0.15);
+        --shadow-xl: 0 20px 60px rgba(0,0,0,0.2);
     }
     
-    /* Spinning animation styles */
+    /* Base styling improvements */
+    .stApp {
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
+    }
+    
+    /* Enhanced main header with glassmorphism effect */
+    .main-header {
+        background: var(--primary-gradient);
+        backdrop-filter: blur(20px);
+        border: 1px solid var(--glass-border);
+        padding: 3rem 2rem;
+        border-radius: 24px;
+        text-align: center;
+        margin-bottom: 2rem;
+        box-shadow: var(--shadow-xl);
+        position: relative;
+        overflow: hidden;
+        animation: headerFloat 6s ease-in-out infinite;
+    }
+    
+    .main-header::before {
+        content: '';
+        position: absolute;
+        top: -50%;
+        left: -50%;
+        width: 200%;
+        height: 200%;
+        background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+        animation: shimmer 8s linear infinite;
+        pointer-events: none;
+    }
+    
+    .main-title {
+        color: #ffffff;
+        font-size: 4rem;
+        font-weight: 800;
+        margin: 0;
+        text-shadow: 4px 4px 15px rgba(0,0,0,0.8), 0 0 30px rgba(255,255,255,0.6), 0 0 40px rgba(255,255,255,0.4), 0 0 50px rgba(255,255,255,0.2);
+        letter-spacing: -0.02em;
+        position: relative;
+        z-index: 2;
+        -webkit-text-stroke: 2px rgba(0,0,0,0.3);
+        animation: textShimmer 3s ease-in-out infinite;
+        filter: drop-shadow(0 0 20px rgba(255,255,255,0.9)) drop-shadow(0 0 30px rgba(255,255,255,0.5));
+    }
+    
+    .main-subtitle {
+        color: #ffffff;
+        font-size: 1.4rem;
+        font-weight: 600;
+        margin-top: 1rem;
+        text-shadow: 3px 3px 10px rgba(0,0,0,0.6), 0 0 20px rgba(255,255,255,0.4), 0 0 25px rgba(255,255,255,0.2);
+        position: relative;
+        z-index: 2;
+        letter-spacing: 0.01em;
+        -webkit-text-stroke: 1px rgba(0,0,0,0.2);
+        filter: drop-shadow(0 0 12px rgba(255,255,255,0.5));
+    }
+    
+    /* Enhanced metric cards with hover effects */
+    .metric-card {
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(20px);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        padding: 2.5rem;
+        border-radius: 20px;
+        box-shadow: var(--shadow-md);
+        text-align: center;
+        margin: 1rem 0;
+        transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .metric-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+        transition: left 0.6s;
+    }
+    
+    .metric-card:hover {
+        transform: translateY(-8px) scale(1.02);
+        box-shadow: var(--shadow-xl);
+        border-color: rgba(102, 126, 234, 0.3);
+    }
+    
+    .metric-card:hover::before {
+        left: 100%;
+    }
+    
+    .metric-card h3 {
+        font-size: 2.5rem !important;
+        font-weight: 700 !important;
+        margin-bottom: 0.5rem !important;
+        background: var(--primary-gradient);
+        background-clip: text;
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+    
+    .metric-card h3 span {
+        -webkit-text-fill-color: initial;
+        color: inherit;
+        text-shadow: 1px 1px 3px rgba(0,0,0,0.2);
+    }
+    
+    .metric-card p {
+        color: #2d3748 !important;
+        font-size: 1rem !important;
+        font-weight: 600 !important;
+        margin: 0 !important;
+        text-shadow: 0 1px 2px rgba(0,0,0,0.1);
+    }
+    
+    /* Enhanced success cards */
+    .success-card {
+        background: var(--success-gradient);
+        color: #065f46 !important;
+        padding: 2rem;
+        border-radius: 16px;
+        margin: 1rem 0;
+        border: none;
+        box-shadow: var(--shadow-md);
+        position: relative;
+        overflow: hidden;
+        animation: pulseGlow 2s ease-in-out infinite;
+    }
+    
+    .success-card::after {
+        content: '✨';
+        position: absolute;
+        top: 1rem;
+        right: 1rem;
+        font-size: 1.5rem;
+        opacity: 0.7;
+    }
+    
+    .success-card h3 {
+        color: #065f46 !important;
+        font-weight: 700 !important;
+        margin-bottom: 0.5rem !important;
+        text-shadow: none !important;
+    }
+    
+    /* Enhanced warning cards */
+    .warning-card {
+        background: var(--warning-gradient) !important;
+        color: #ffffff !important;
+        border: none !important;
+        padding: 2rem;
+        border-radius: 16px;
+        margin: 1rem 0;
+        text-shadow: 1px 1px 3px rgba(0,0,0,0.3) !important;
+        box-shadow: var(--shadow-lg) !important;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .warning-card::before {
+        content: '⚠️';
+        position: absolute;
+        top: 1rem;
+        right: 1rem;
+        font-size: 1.5rem;
+        opacity: 0.8;
+    }
+    
+    /* Enhanced info cards */
+    .info-card {
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(147, 197, 253, 0.1) 100%);
+        backdrop-filter: blur(20px);
+        border: 1px solid rgba(59, 130, 246, 0.2);
+        color: var(--text-primary) !important;
+        padding: 2rem;
+        border-radius: 16px;
+        margin: 1rem 0;
+        box-shadow: var(--shadow-md);
+        position: relative;
+    }
+    
+    .info-card h3 {
+        color: #1e40af !important;
+        font-weight: 700 !important;
+        margin-bottom: 1rem !important;
+    }
+    
+    .info-card ul {
+        color: var(--text-secondary) !important;
+    }
+    
+    /* Enhanced similarity badges */
+    .similarity-badge {
+        display: inline-block;
+        padding: 0.75rem 1.5rem;
+        border-radius: 50px;
+        font-weight: 600;
+        margin: 0.3rem;
+        font-size: 0.9rem;
+        box-shadow: var(--shadow-sm);
+        transition: all 0.3s ease;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .similarity-badge::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+        transition: left 0.5s;
+    }
+    
+    .similarity-badge:hover::before {
+        left: 100%;
+    }
+    
+    .high-similarity { 
+        background: var(--danger-gradient);
+        color: #ffffff !important;
+        border: none;
+        text-shadow: 1px 1px 2px rgba(0,0,0,0.2);
+    }
+    
+    .medium-similarity { 
+        background: var(--warning-gradient);
+        color: #ffffff !important;
+        border: none;
+        text-shadow: 1px 1px 2px rgba(0,0,0,0.2);
+    }
+    
+    .low-similarity { 
+        background: var(--success-gradient);
+        color: #065f46 !important;
+        border: none;
+        font-weight: 600;
+    }
+    
+    /* Enhanced match highlight */
+    .match-highlight {
+        background: var(--primary-gradient) !important;
+        color: var(--text-light) !important;
+        border: none !important;
+        padding: 1.5rem;
+        border-radius: 12px;
+        font-weight: 600;
+        margin: 1rem 0;
+        text-shadow: 1px 1px 3px rgba(0,0,0,0.3) !important;
+        box-shadow: var(--shadow-lg) !important;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .match-highlight::before {
+        content: '🔍';
+        position: absolute;
+        top: 1rem;
+        right: 1rem;
+        font-size: 1.2rem;
+        opacity: 0.8;
+    }
+    
+    /* Enhanced sidebar header */
+    .sidebar-header {
+        background: var(--primary-gradient);
+        padding: 2rem;
+        border-radius: 16px;
+        color: var(--text-light);
+        text-align: center;
+        margin-bottom: 1.5rem;
+        text-shadow: 1px 1px 3px rgba(0,0,0,0.3);
+        box-shadow: var(--shadow-lg);
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .sidebar-header::before {
+        content: '⚙️';
+        position: absolute;
+        top: -10px;
+        right: -10px;
+        font-size: 3rem;
+        opacity: 0.1;
+        transform: rotate(45deg);
+    }
+    
+    /* Enhanced progress container */
+    .progress-container {
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(20px);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        padding: 2rem;
+        border-radius: 16px;
+        margin: 1rem 0;
+        box-shadow: var(--shadow-md);
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .progress-container::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 4px;
+        background: var(--primary-gradient);
+        animation: progressShimmer 2s linear infinite;
+    }
+    
+    /* Enhanced animations */
+    @keyframes headerFloat {
+        0%, 100% { transform: translateY(0px) rotate(0deg); }
+        50% { transform: translateY(-10px) rotate(0.5deg); }
+    }
+    
+    @keyframes shimmer {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+    
+    @keyframes textShimmer {
+        0%, 100% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+    }
+    
+    @keyframes pulseGlow {
+        0%, 100% { box-shadow: var(--shadow-md); }
+        50% { box-shadow: 0 4px 20px rgba(132, 250, 176, 0.4); }
+    }
+    
+    @keyframes progressShimmer {
+        0% { transform: translateX(-100%); }
+        100% { transform: translateX(100%); }
+    }
+    
+    /* Spinning animation styles - enhanced */
     @keyframes spin {
         0% { transform: rotate(0deg); }
         100% { transform: rotate(360deg); }
     }
     
+    @keyframes spinGlow {
+        0% { 
+            transform: rotate(0deg);
+            filter: drop-shadow(0 0 5px rgba(102, 126, 234, 0.5));
+        }
+        100% { 
+            transform: rotate(360deg);
+            filter: drop-shadow(0 0 10px rgba(102, 126, 234, 0.8));
+        }
+    }
+    
     .spinner {
         display: inline-block;
-        width: 24px;
-        height: 24px;
-        border: 3px solid #f3f3f3;
+        width: 28px;
+        height: 28px;
+        border: 3px solid rgba(255,255,255,0.3);
         border-top: 3px solid #667eea;
         border-radius: 50%;
-        animation: spin 1s linear infinite;
-        margin-right: 8px;
+        animation: spinGlow 1s linear infinite;
+        margin-right: 12px;
+        filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1));
     }
     
     .spinner-icon {
         display: inline-block;
-        font-size: 1.5rem;
-        animation: spin 2s linear infinite;
-        margin-right: 8px;
+        font-size: 1.8rem;
+        animation: spinGlow 2s linear infinite;
+        margin-right: 12px;
+        filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2));
     }
     
     .spinner-container {
         display: flex;
         align-items: center;
         justify-content: center;
-        height: 40px;
+        height: 50px;
+        padding: 1rem;
     }
     
-    /* Different colored spinners for different stages */
+    /* Enhanced colored spinners */
     .spinner-loading {
         border-top-color: #3b82f6;
+        filter: drop-shadow(0 0 8px rgba(59, 130, 246, 0.6));
     }
     .spinner-processing {
         border-top-color: #8b5cf6;
+        filter: drop-shadow(0 0 8px rgba(139, 92, 246, 0.6));
     }
     .spinner-analyzing {
         border-top-color: #06b6d4;
+        filter: drop-shadow(0 0 8px rgba(6, 182, 212, 0.6));
     }
     .spinner-finalizing {
         border-top-color: #10b981;
+        filter: drop-shadow(0 0 8px rgba(16, 185, 129, 0.6));
+    }
+    
+    /* Enhanced button styling */
+    .stButton > button {
+        background: var(--primary-gradient) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 12px !important;
+        padding: 0.75rem 2rem !important;
+        font-weight: 600 !important;
+        font-size: 1rem !important;
+        transition: all 0.3s ease !important;
+        box-shadow: var(--shadow-md) !important;
+        text-transform: none !important;
+        letter-spacing: 0.01em !important;
+    }
+    
+    .stButton > button:hover {
+        transform: translateY(-2px) !important;
+        box-shadow: var(--shadow-lg) !important;
+        filter: brightness(110%) !important;
+    }
+    
+    .stButton > button:active {
+        transform: translateY(0px) !important;
+    }
+    
+    /* Enhanced sidebar styling */
+    .css-1d391kg {
+        background: linear-gradient(180deg, rgba(255,255,255,0.95) 0%, rgba(248,250,252,0.95) 100%) !important;
+        backdrop-filter: blur(20px) !important;
+    }
+    
+    /* Minimal expander styling - don't interfere with functionality */
+    
+    /* Enhanced dataframe styling */
+    .stDataFrame {
+        border-radius: 12px !important;
+        overflow: hidden !important;
+        box-shadow: var(--shadow-md) !important;
+    }
+    
+    /* Mobile responsiveness */
+    @media (max-width: 768px) {
+        .main-title {
+            font-size: 2.5rem;
+        }
+        .main-subtitle {
+            font-size: 1.1rem;
+        }
+        .metric-card {
+            padding: 1.5rem;
+        }
+        .metric-card h3 {
+            font-size: 2rem !important;
+        }
+    }
+    
+    /* Dark theme support */
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --text-primary: #f7fafc;
+            --text-secondary: #e2e8f0;
+        }
+        
+        .stApp {
+            background: linear-gradient(135deg, #1a202c 0%, #2d3748 100%);
+        }
+        
+        .metric-card {
+            background: rgba(45, 55, 72, 0.8);
+            color: var(--text-primary);
+        }
+        
+        .metric-card p {
+            color: #e2e8f0 !important;
+            font-weight: 600 !important;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+        }
+        
+        .metric-card h3 span {
+            -webkit-text-fill-color: initial !important;
+            color: inherit !important;
+            text-shadow: 1px 1px 3px rgba(0,0,0,0.4);
+        }
+        
+        .info-card {
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.2) 0%, rgba(147, 197, 253, 0.2) 100%);
+            color: var(--text-primary) !important;
+        }
     }
     </style>
     """, unsafe_allow_html=True)
     
     st.markdown("""
     <div class="main-header">
-        <h1 class="main-title">📚 Smart Document Analyzer</h1>
-        <p class="main-subtitle">AI-Powered Document Similarity Detection • Find Similar Content Instantly</p>
+        <h1 class="main-title">🚀 Smart Document Analyzer</h1>
+        <p class="main-subtitle">✨ AI-Powered Document Similarity Detection • Find Similar Content Instantly ✨</p>
+        <div style="margin-top: 1.5rem; display: flex; justify-content: center; gap: 2rem; flex-wrap: wrap;">
+            <div style="background: rgba(255,255,255,0.15); padding: 0.5rem 1rem; border-radius: 25px; backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.2);">
+                <span style="color: #ffffff; font-size: 0.85rem; font-weight: 700; text-shadow: 2px 2px 5px rgba(0,0,0,0.5), 0 0 10px rgba(255,255,255,0.3); -webkit-text-stroke: 0.5px rgba(0,0,0,0.2);">🧠 Smart AI Analysis</span>
+            </div>
+            <div style="background: rgba(255,255,255,0.15); padding: 0.5rem 1rem; border-radius: 25px; backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.2);">
+                <span style="color: #ffffff; font-size: 0.85rem; font-weight: 700; text-shadow: 2px 2px 5px rgba(0,0,0,0.5), 0 0 10px rgba(255,255,255,0.3); -webkit-text-stroke: 0.5px rgba(0,0,0,0.2);">🖼️ Image Detection</span>
+            </div>
+            <div style="background: rgba(255,255,255,0.15); padding: 0.5rem 1rem; border-radius: 25px; backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.2);">
+                <span style="color: #ffffff; font-size: 0.85rem; font-weight: 700; text-shadow: 2px 2px 5px rgba(0,0,0,0.5), 0 0 10px rgba(255,255,255,0.3); -webkit-text-stroke: 0.5px rgba(0,0,0,0.2);">⚡ Lightning Fast</span>
+            </div>
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -397,7 +775,7 @@ def create_similarity_overview_charts(semantic_scores, sequence_scores, exact_ma
     with col1:
         st.markdown(f"""
         <div class="metric-card">
-            <h3 style="color: #3b82f6;">📋 {total_comparisons}</h3>
+            <h3 style="color: #3b82f6;"><span>📋</span> {total_comparisons}</h3>
             <p>Document Comparisons Made</p>
         </div>
         """, unsafe_allow_html=True)
@@ -405,7 +783,7 @@ def create_similarity_overview_charts(semantic_scores, sequence_scores, exact_ma
     with col2:
         st.markdown(f"""
         <div class="metric-card">
-            <h3 style="color: #8b5cf6;">🧠 {avg_semantic:.1%}</h3>
+            <h3 style="color: #8b5cf6;"><span>🧠</span> {avg_semantic:.1%}</h3>
             <p>Average Content Similarity</p>
         </div>
         """, unsafe_allow_html=True)
@@ -413,7 +791,7 @@ def create_similarity_overview_charts(semantic_scores, sequence_scores, exact_ma
     with col3:
         st.markdown(f"""
         <div class="metric-card">
-            <h3 style="color: #06b6d4;">🔤 {avg_sequence:.2f}</h3>
+            <h3 style="color: #06b6d4;"><span>🔤</span> {avg_sequence:.2f}</h3>
             <p>Average Text Pattern Match</p>
         </div>
         """, unsafe_allow_html=True)
@@ -421,7 +799,7 @@ def create_similarity_overview_charts(semantic_scores, sequence_scores, exact_ma
     with col4:
         st.markdown(f"""
         <div class="metric-card">
-            <h3 style="color: #f59e0b;">📊 {exact_count}</h3>
+            <h3 style="color: #f59e0b;"><span>📊</span> {exact_count}</h3>
             <p>Exact Copies Found</p>
         </div>
         """, unsafe_allow_html=True)
