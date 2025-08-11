@@ -1217,6 +1217,10 @@ def run_image_analysis(directory):
                                 'dup_filepath': pair['dup_path'],
                                 'orig_pdf': pair['orig_pdf'],
                                 'dup_pdf': pair['dup_pdf'],
+                                'orig_page': pair.get('orig_page', 0),
+                                'dup_page': pair.get('dup_page', 0),
+                                'orig_image_index': pair.get('orig_image_index', 0),
+                                'dup_image_index': pair.get('dup_image_index', 0),
                                 'score': pair['similarity']
                             }
                             matches.append(match_data)
@@ -1238,18 +1242,18 @@ def run_image_analysis(directory):
                                 with col1:
                                     st.image(
                                         match['orig_filepath'],
-                                        caption=f"Document: {match['orig_pdf']}",
+                                        caption=f"Document: {match['orig_pdf']} (Page {match['orig_page']})",
                                         use_container_width=True
                                     )
                                 with col2:
                                     st.image(
                                         match['dup_filepath'],
-                                        caption=f"Document: {match['dup_pdf']}",
+                                        caption=f"Document: {match['dup_pdf']} (Page {match['dup_page']})",
                                         use_container_width=True
                                     )
                                 
-                                # Store for session state
-                                pair_info = f"**Match #{i}:** {match['orig_pdf']} ↔ {match['dup_pdf']} (Score: {match['score']:.2%})"
+                                # Store for session state with page information
+                                pair_info = f"**Match #{i}:** {match['orig_pdf']} (Page {match['orig_page']}) ↔ {match['dup_pdf']} (Page {match['dup_page']}) (Score: {match['score']:.2%})"
                                 st.session_state.duplicate_image_pairs.append(pair_info)
                 else:
                     st.success("✅ No duplicate images found across PDF files.")

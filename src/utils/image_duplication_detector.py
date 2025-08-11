@@ -17,15 +17,19 @@ class ImageDuplicationDetector:
         # Storage for metadata
         self.filepaths: List[str] = []
         self.pdf_names: List[str] = []
+        self.pages: List[int] = []
+        self.image_indices: List[int] = []
         self._images: List[Image.Image] = []
 
     def load_images(self, results: List[Dict[str, str]]):
         """
         Load images and their PDF origin metadata.
-        results: list of {"filepath": str, "pdf": str}
+        results: list of {"filepath": str, "pdf": str, "page": int, "image_index": int}
         """
         self.filepaths = []
         self.pdf_names = []
+        self.pages = []
+        self.image_indices = []
         images = []
         
         print(f"Loading {len(results)} images for analysis...")
@@ -41,6 +45,8 @@ class ImageDuplicationDetector:
                 images.append(img)
                 self.filepaths.append(fp)
                 self.pdf_names.append(r["pdf"])
+                self.pages.append(r.get("page", 0))  # Default to 0 if not present
+                self.image_indices.append(r.get("image_index", 0))  # Default to 0 if not present
                 
                 if (i + 1) % 50 == 0:  # Progress update every 50 images
                     print(f"Loaded {i + 1}/{len(results)} images...")
@@ -123,6 +129,10 @@ class ImageDuplicationDetector:
                             "dup_path": self.filepaths[j],
                             "orig_pdf": self.pdf_names[i],
                             "dup_pdf": self.pdf_names[j],
+                            "orig_page": self.pages[i],
+                            "dup_page": self.pages[j],
+                            "orig_image_index": self.image_indices[i],
+                            "dup_image_index": self.image_indices[j],
                             "similarity": float(similarity)
                         })
                 
@@ -145,5 +155,7 @@ class ImageDuplicationDetector:
         """
         self.filepaths = []
         self.pdf_names = []
+        self.pages = []
+        self.image_indices = []
         self._images = []
         print("Cleared all stored image data")

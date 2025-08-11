@@ -166,7 +166,12 @@ class PDFImageExtractor:
                 with open(filepath, "wb") as f:
                     f.write(img_bytes)
 
-                results.append({"filepath": str(filepath), "pdf": base_name})
+                results.append({
+                    "filepath": str(filepath), 
+                    "pdf": base_name, 
+                    "page": page_num,
+                    "image_index": idx
+                })
 
         doc.close()
         logger.info(f"Extracted {len(results)} images from {pdf_path}")
