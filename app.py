@@ -1008,6 +1008,12 @@ def create_pdf_image_extractor():
     return PDFImageExtractor()  # Will use temporary directory by default
 
 
+@st.cache_resource(show_spinner=False)
+def get_cached_embedding_generator(model_name: str = 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2', batch_size: int | None = None):
+    """Return a cached EmbeddingGenerator instance to avoid reloading the model on reruns."""
+    return EmbeddingGenerator(model_name=model_name, batch_size=batch_size)
+
+
 def run_image_analysis(directory):
     """Run image plagiarism analysis with proper session state management."""
     
@@ -1345,7 +1351,7 @@ def run_text_analysis(directory, chunk_size=5000, similarity_threshold=0.3):
             status_text.info("🧠 Teaching AI to understand your documents...")
             step_info.text("Step 3/5: Creating smart summaries of document content")
             
-            embedder = EmbeddingGenerator()
+            embedder = get_cached_embedding_generator()
             embeddings = embedder.generate_embeddings(chunks)
             overall_progress.progress(60)
             
