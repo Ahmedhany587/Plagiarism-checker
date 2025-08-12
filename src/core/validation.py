@@ -44,6 +44,11 @@ class SecurityValidationError(ValidationError):
     pass
 
 
+class ContentValidationError(ValidationError):
+    """Exception raised when a document lacks extractable text content."""
+    pass
+
+
 # Validation Utilities
 class FileValidator:
     """Comprehensive file validation utilities."""
@@ -260,6 +265,46 @@ class ParameterValidator:
             )
         
         return value
+
+
+class ContentValidator:
+    """Validation helpers for text content presence and quality."""
+
+    @staticmethod
+    def has_text_content(pages: List[str], min_total_chars: int = 20) -> bool:
+        """Return True if the list of pages contains meaningful text.
+
+        Args:
+            pages: List of page strings (already extracted text per page)
+            min_total_chars: Minimum total non-whitespace characters required
+
+        A simple and fast check to decide if a PDF likely contains selectable text
+        vs. being a scanned image-only document.
+        """
+        if not isinstance(pages, list) or len(pages) == 0:
+            return False
+
+        total_chars = 0
+        for page in pages:
+            if isinstance(page, str):
+                total_chars += len(page.strip())
+                if total_chars >= min_total_chars:
+                    return True
+        return False
+
+    @staticmethod
+    def filter_pdfs_with_text(chunks_by_pdf: Dict[str, List[str]], min_total_chars: int = 20) -> Dict[str, List[str]]:
+        """Filter out PDFs that have no meaningful text content.
+
+        Returns a new dict containing only entries that have enough text.
+        """
+        if not isinstance(chunks_by_pdf, dict):
+            return {}
+        return {
+            pdf: pages
+            for pdf, pages in chunks_by_pdf.items()
+            if ContentValidator.has_text_content(pages, min_total_chars=min_total_chars)
+        }
 
 
 # Decorators for validation

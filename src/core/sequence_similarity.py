@@ -42,12 +42,15 @@ class SequenceSimilarityCalculator:
 
     def _preprocess_chunks(self, chunks: Dict[str, list]) -> Dict[str, list]:
         """
-        Apply default_process to every page in every PDF.
+        Apply default_process to every page in every PDF and drop PDFs with no pages.
         """
-        return {
-            pdf: [default_process(page) for page in pages]
-            for pdf, pages in chunks.items()
-        }
+        cleaned = {}
+        for pdf, pages in chunks.items():
+            if isinstance(pages, list) and len(pages) > 0:
+                processed = [default_process(page) for page in pages if isinstance(page, str) and page.strip()]
+                if processed:
+                    cleaned[pdf] = processed
+        return cleaned
 
     def _pair_similarity(self, args):
         pdfA, pdfB, cleaned_chunks = args
@@ -64,6 +67,9 @@ class SequenceSimilarityCalculator:
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
         cleaned_chunks = self._preprocess_chunks(chunks)
+        # If fewer than 2 PDFs have text, return empty result gracefully
+        if len(cleaned_chunks) < 2:
+            return {}
         scores = {}
         pairs = list(itertools.combinations(cleaned_chunks.keys(), 2))
         args = [(pdfA, pdfB, cleaned_chunks) for pdfA, pdfB in pairs]

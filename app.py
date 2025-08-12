@@ -16,6 +16,7 @@ from src.core.embedding_generator import EmbeddingGenerator
 from src.core.semantic_similarity import PDFSimilarityCalculator
 from src.core.sequence_similarity import SequenceSimilarityCalculator
 from src.core.exact_match import ExactMatchDetector
+from src.core.validation import ContentValidator
 
 # Import image extraction and duplication detection modules
 from src.utils.pdf_img_extractor import PDFImageExtractor
@@ -62,6 +63,8 @@ def initialize_session_state():
         st.session_state.image_analysis_logs = []
     if "duplicate_image_pairs" not in st.session_state:
         st.session_state.duplicate_image_pairs = []
+    if "skipped_pdfs" not in st.session_state:
+        st.session_state.skipped_pdfs = []
 
 
 def initialize_app():
@@ -628,6 +631,7 @@ def reset_analysis_state(new_directory):
     st.session_state.exact_matches = None
     st.session_state.image_analysis_logs = []
     st.session_state.duplicate_image_pairs = []
+    st.session_state.skipped_pdfs = []
 
 
 def get_directory_input():
@@ -1035,6 +1039,8 @@ def run_image_analysis(directory):
         return
     
     # Run the analysis
+    # Container to show persistent scanned/empty PDF notices
+    skipped_info_container = st.container()
     progress_container = st.container()
     
     with progress_container:
@@ -1294,6 +1300,8 @@ def run_text_analysis(directory, chunk_size=5000, similarity_threshold=0.3):
         logger.error(f"Input validation failed: {str(e)}")
         return None, None, None
     
+    # Container to persist scanned/empty PDF notices outside progress UI
+    skipped_info_container = st.container()
     progress_container = st.container()
     
     try:
@@ -1345,14 +1353,41 @@ def run_text_analysis(directory, chunk_size=5000, similarity_threshold=0.3):
             chunks = pdf_handler.extract_page_chunks(chunk_size=chunk_size)
             overall_progress.progress(40)
             
-            # Step 3: Generate embeddings
+            # Step 3: Validate per-PDF content and generate embeddings
             with spinner_placeholder:
                 st.markdown('<div class="spinner-container"><div class="spinner spinner-analyzing"></div></div>', unsafe_allow_html=True)
-            status_text.info("🧠 Teaching AI to understand your documents...")
-            step_info.text("Step 3/5: Creating smart summaries of document content")
+            status_text.info("🧠 Checking which PDFs contain readable text and preparing AI...")
+            step_info.text("Step 3/5: Validating text content and preparing embeddings")
             
+            # Filter out PDFs that have no extractable text
+            chunks_with_text = ContentValidator.filter_pdfs_with_text(chunks, min_total_chars=20)
+            skipped_pdfs = [name for name in chunks.keys() if name not in chunks_with_text]
+
+            # User-friendly feedback about skipped PDFs (persist during and after analysis)
+            st.session_state.skipped_pdfs = skipped_pdfs
+            if skipped_pdfs:
+                with skipped_info_container:
+                    st.markdown(
+                        """
+                        <div class="warning-card">
+                            <h3>⚠️ Some PDFs were skipped</h3>
+                            <p>These files appear to be scanned or contain no selectable text:</p>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                    for name in skipped_pdfs:
+                        st.markdown(f"- {name}")
+
+            # Ensure at least 2 PDFs remain for comparison
+            if len(chunks_with_text) < 2:
+                spinner_placeholder.empty()
+                st.error("❌ Not enough documents with readable text to compare.")
+                st.info("You need at least 2 PDFs that contain selectable text. Consider OCR for scanned PDFs.")
+                return None, None, None
+
             embedder = get_cached_embedding_generator()
-            embeddings = embedder.generate_embeddings(chunks)
+            embeddings = embedder.generate_embeddings(chunks_with_text)
             overall_progress.progress(60)
             
             # Check if any embeddings were generated
@@ -1371,13 +1406,15 @@ def run_text_analysis(directory, chunk_size=5000, similarity_threshold=0.3):
             valid_embeddings = {k: v for k, v in embeddings.items() if v and len(v) > 0}
             if len(valid_embeddings) < 2:
                 spinner_placeholder.empty()
-                st.error(f"❌ Need at least 2 PDFs with extractable text. Found {len(valid_embeddings)} valid PDF(s).")
-                st.info("PDF processing results:")
-                for pdf_name, emb_list in embeddings.items():
-                    if emb_list and len(emb_list) > 0:
-                        st.success(f"✅ {pdf_name}: {len(emb_list)} text chunks")
+                st.error(f"❌ Not enough documents produced embeddings. Found {len(valid_embeddings)} valid PDF(s).")
+                st.info("Document processing summary:")
+                for pdf_name in chunks.keys():
+                    if pdf_name in skipped_pdfs:
+                        st.error(f"❌ {pdf_name}: No readable text (likely scanned).")
+                    elif pdf_name in valid_embeddings:
+                        st.success(f"✅ {pdf_name}: Ready for comparison")
                     else:
-                        st.error(f"❌ {pdf_name}: No text content found")
+                        st.warning(f"⚠️ {pdf_name}: Text found but embeddings could not be generated.")
                 logger.error(f"Only {len(valid_embeddings)} PDFs have valid embeddings - cannot proceed")
                 return None, None, None
             
@@ -1391,7 +1428,8 @@ def run_text_analysis(directory, chunk_size=5000, similarity_threshold=0.3):
             semantic_scores = similarity_calculator.compute_all_pdf_similarities()
             
             seq_similarity_calculator = SequenceSimilarityCalculator()
-            sequence_scores = seq_similarity_calculator.compute_all_pdf_similarities(chunks)
+            # Use only the PDFs with readable text for sequence similarity too
+            sequence_scores = seq_similarity_calculator.compute_all_pdf_similarities({k: chunks_with_text[k] for k in valid_embeddings.keys()})
             
             overall_progress.progress(80)
             
@@ -1402,7 +1440,7 @@ def run_text_analysis(directory, chunk_size=5000, similarity_threshold=0.3):
             step_info.text("Step 5/5: Identifying identical text passages")
             
             exact_match_detector = ExactMatchDetector()
-            exact_matches = exact_match_detector.find_exact_matches(chunks)
+            exact_matches = exact_match_detector.find_exact_matches(chunks_with_text)
             
             overall_progress.progress(100)
             spinner_placeholder.empty()
@@ -1516,6 +1554,21 @@ def main():
     
     # Main content area
     if directory and os.path.exists(directory):
+        # Persistently show skipped PDFs info if any
+        if 'skipped_pdfs' in st.session_state and st.session_state.skipped_pdfs:
+            with st.container():
+                st.markdown(
+                    """
+                    <div class="warning-card">
+                        <h3>⚠️ Some PDFs were skipped</h3>
+                        <p>These files appear to be scanned or contain no selectable text:</p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                for name in st.session_state.skipped_pdfs:
+                    st.markdown(f"- {name}")
+
         # Display text analysis results if completed
         if st.session_state.text_analysis_complete and st.session_state.semantic_scores is not None:
             st.markdown("## 📝 Text Similarity Analysis Results")
