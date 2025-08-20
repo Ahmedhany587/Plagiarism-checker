@@ -6,6 +6,13 @@ import numpy as np
 import logging
 from datetime import datetime
 from dotenv import load_dotenv
+import asyncio
+import concurrent.futures
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+import psutil
+import torch
 
 # Load environment variables from .env file
 load_dotenv()
@@ -33,6 +40,126 @@ setup_logging(
     enable_console=True,
     enable_file=True
 )
+
+# Global configuration for concurrent processing
+CONCURRENT_CONFIG = {
+    'max_workers_pdf': 4,  # Max workers for PDF processing
+    'max_workers_embedding': 2,  # Max workers for embedding generation
+    'max_workers_similarity': 4,  # Max workers for similarity calculation
+    'max_workers_image': 3,  # Max workers for image processing
+    'batch_size_embedding': 32,  # Batch size for embedding generation
+    'timeout_seconds': 300,  # 5 minutes timeout for operations
+    'memory_limit_mb': 2048,  # 2GB memory limit
+}
+
+# Progress tracking for concurrent operations
+class ProgressTracker:
+    def __init__(self):
+        self.current_stage = "idle"
+        self.progress = 0.0
+        self.status_message = ""
+        self.stage_progress = {}
+        self.start_time = None
+        self.operation_lock = threading.Lock()
+    
+    def update_progress(self, stage, progress, message):
+        with self.operation_lock:
+            self.current_stage = stage
+            self.progress = progress
+            self.status_message = message
+            self.stage_progress[stage] = progress
+    
+    def get_progress(self):
+        with self.operation_lock:
+            return {
+                'stage': self.current_stage,
+                'progress': self.progress,
+                'message': self.status_message,
+                'stage_progress': self.stage_progress.copy()
+            }
+
+# Global progress tracker
+progress_tracker = ProgressTracker()
+
+def check_system_resources():
+    """Check if system has enough resources for concurrent processing."""
+    try:
+        # Check available memory
+        memory = psutil.virtual_memory()
+        available_mb = memory.available / (1024 * 1024)
+        
+        # Check CPU cores
+        cpu_count = psutil.cpu_count()
+        
+        # Check disk space
+        disk = psutil.disk_usage('/')
+        available_gb = disk.free / (1024 * 1024 * 1024)
+        
+        logger = logging.getLogger(__name__)
+        logger.info(f"System resources - Memory: {available_mb:.1f}MB, CPU: {cpu_count}, Disk: {available_gb:.1f}GB")
+        
+        # Adjust concurrent processing based on available resources
+        if available_mb < 1024:  # Less than 1GB RAM
+            CONCURRENT_CONFIG['max_workers_pdf'] = 2
+            CONCURRENT_CONFIG['max_workers_embedding'] = 1
+            CONCURRENT_CONFIG['max_workers_similarity'] = 2
+            CONCURRENT_CONFIG['max_workers_image'] = 2
+            logger.warning("Low memory detected, reducing concurrent workers")
+        
+        if cpu_count < 4:
+            CONCURRENT_CONFIG['max_workers_pdf'] = min(2, cpu_count)
+            CONCURRENT_CONFIG['max_workers_embedding'] = 1
+            CONCURRENT_CONFIG['max_workers_similarity'] = min(2, cpu_count)
+            CONCURRENT_CONFIG['max_workers_image'] = min(2, cpu_count)
+            logger.warning("Limited CPU cores detected, reducing concurrent workers")
+        
+        if available_gb < 1:  # Less than 1GB disk space
+            logger.warning("Low disk space detected, consider cleaning up")
+        
+        return True
+        
+    except Exception as e:
+        logging.error(f"Failed to check system resources: {e}")
+        return False
+
+def extract_images_from_pdf_worker(extractor, pdf_path):
+    """Worker function for parallel image extraction from PDF."""
+    try:
+        return extractor.extract_images_from_pdf(pdf_path)
+    except Exception as e:
+        logging.error(f"Failed to extract images from {pdf_path}: {e}")
+        return []
+
+def process_pdf_worker(pdf_handler, pdf_path, chunk_size):
+    """Worker function for parallel PDF text extraction."""
+    try:
+        return pdf_handler._extract_chunks_from_pdf(pdf_path, chunk_size)
+    except Exception as e:
+        logging.error(f"Failed to process PDF {pdf_path}: {e}")
+        return os.path.basename(pdf_path), []
+
+def compute_similarity_worker(similarity_calculator, pdf_pair):
+    """Worker function for parallel similarity computation."""
+    try:
+        pdfA, pdfB = pdf_pair
+        embA = similarity_calculator.embeddings.get(pdfA, [])
+        embB = similarity_calculator.embeddings.get(pdfB, [])
+        
+        if not embA or not embB:
+            return pdf_pair, None
+        
+        # Convert lists to tensors if needed
+        if isinstance(embA, list):
+            embA = torch.stack([torch.as_tensor(e) for e in embA])
+        if isinstance(embB, list):
+            embB = torch.stack([torch.as_tensor(e) for e in embB])
+        
+        max_sim, min_sim, mean_sim = similarity_calculator.compute_pairwise_similarity(embA, embB)
+        return pdf_pair, (max_sim, min_sim, mean_sim)
+        
+    except Exception as e:
+        logging.error(f"Failed to compute similarity for pair {pdf_pair}: {e}")
+        return pdf_pair, None
 
 
 def create_spinner(spinner_type="loading", icon=None):
@@ -906,6 +1033,94 @@ def create_similarity_matrix_visualization(semantic_scores, sequence_scores):
             st.info("No text pattern data available.")
 
 
+def display_semantic_similarity_with_content(semantic_scores, chunks_with_text, threshold=0.7):
+    """Display semantic similarity results with actual matched content."""
+    st.markdown("## 🧠 Semantic Similarity Analysis with Content")
+    
+    if not semantic_scores:
+        st.markdown("""
+        <div class="success-card">
+            <h3>✅ No Semantic Similarities Found</h3>
+            <p>Great! No significant semantic similarities were detected between your documents.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+    
+    # Filter high similarity matches
+    high_similarity_matches = []
+    for (pdfA, pdfB), (max_sim, min_sim, mean_sim) in semantic_scores.items():
+        if mean_sim >= threshold:
+            high_similarity_matches.append((pdfA, pdfB, max_sim, min_sim, mean_sim))
+    
+    if not high_similarity_matches:
+        st.markdown("""
+        <div class="success-card">
+            <h3>✅ No High Similarity Content Found</h3>
+            <p>No content with similarity above {threshold:.1%} was detected between your documents.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+    
+    # Sort by mean similarity (highest first)
+    high_similarity_matches.sort(key=lambda x: x[4], reverse=True)
+    
+    st.markdown(f"""
+    <div class="warning-card">
+        <h3>🚨 High Similarity Content Found</h3>
+        <p>Found <strong>{len(high_similarity_matches)}</strong> document pairs with semantic similarity above {threshold:.1%}.</p>
+        <p>Review these matches to check for potential content reuse.</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    for i, (pdfA, pdfB, max_sim, min_sim, mean_sim) in enumerate(high_similarity_matches, 1):
+        pdfA_short = pdfA.replace('.pdf', '')
+        pdfB_short = pdfB.replace('.pdf', '')
+        
+        with st.expander(f"🔍 Similarity #{i}: {pdfA_short} ↔ {pdfB_short} (Mean: {mean_sim:.1%})", expanded=i==1):
+            st.markdown(f"""
+            <div class="match-highlight">
+                <strong>Documents:</strong> {pdfA_short} and {pdfB_short}<br>
+                <strong>Similarity Scores:</strong> Max: {max_sim:.1%}, Min: {min_sim:.1%}, Mean: {mean_sim:.1%}
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Show sample content from both documents
+            if pdfA in chunks_with_text and pdfB in chunks_with_text:
+                chunksA = chunks_with_text[pdfA]
+                chunksB = chunks_with_text[pdfB]
+                
+                if chunksA and chunksB:
+                    # Show first chunk from each document as sample
+                    sampleA = chunksA[0][:300] + "..." if len(chunksA[0]) > 300 else chunksA[0]
+                    sampleB = chunksB[0][:300] + "..." if len(chunksB[0]) > 300 else chunksB[0]
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.markdown(f"""
+                        <div style="background: #fef3c7; border: 1px solid #f59e0b; padding: 1rem; border-radius: 8px;">
+                            <strong>📄 {pdfA_short} (Sample Content):</strong><br>
+                            <div style="background: #ffffff; padding: 0.5rem; border-radius: 4px; margin-top: 0.5rem; font-size: 0.9rem; line-height: 1.4;">
+                                {sampleA}
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
+                    with col2:
+                        st.markdown(f"""
+                        <div style="background: #dbeafe; border: 1px solid #3b82f6; padding: 1rem; border-radius: 8px;">
+                            <strong>📄 {pdfB_short} (Sample Content):</strong><br>
+                            <div style="background: #ffffff; padding: 0.5rem; border-radius: 4px; margin-top: 0.5rem; font-size: 0.9rem; line-height: 1.4;">
+                                {sampleB}
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
+                    st.markdown("""
+                    <div style="background: #e0f2fe; border-left: 4px solid #0288d1; padding: 0.75rem; margin: 1rem 0; border-radius: 4px; color: #01579b;">
+                        <strong>💡 Note:</strong> These are sample content snippets. The similarity score indicates how similar the overall content and meaning are between these documents.
+                    </div>
+                    """, unsafe_allow_html=True)
+
 def display_exact_matches(exact_matches):
     """Display exact match results."""
     st.markdown("## 📊 Exact Copy Detection Results")
@@ -970,16 +1185,44 @@ def display_exact_matches(exact_matches):
                 
                 # Show the actual matched content
                 if content and len(content.strip()) > 0:
-                    # Truncate long content for better display
+                    # Clean and format the content for better display
                     display_content = content.strip()
-                    if len(display_content) > 300:
-                        display_content = display_content[:300] + "..."
                     
+                    # Show full content with option to expand/collapse
+                    if len(display_content) > 500:
+                        # Create expandable content for long matches
+                        with st.expander(f"📝 View Matched Text ({len(display_content)} characters)", expanded=False):
+                            st.markdown(
+                                f"""
+                                <div style="background: #fef3c7; border: 2px solid #f59e0b; padding: 1.5rem; margin: 0.5rem 0; border-radius: 8px; color: #92400e;">
+                                    <strong style="color: #92400e; font-size: 1.1rem;">🚨 IDENTICAL TEXT DETECTED:</strong><br><br>
+                                    <div style="background: #ffffff; padding: 1rem; border-radius: 6px; border-left: 4px solid #f59e0b; font-family: 'Courier New', monospace; font-size: 0.9rem; line-height: 1.6; color: #1f2937; max-height: 400px; overflow-y: auto;">
+                                        {display_content}
+                                    </div>
+                                </div>
+                                """,
+                                unsafe_allow_html=True
+                            )
+                    else:
+                        # Show shorter content directly
+                        st.markdown(
+                            f"""
+                            <div style="background: #fef3c7; border: 2px solid #f59e0b; padding: 1.5rem; margin: 0.5rem 0; border-radius: 8px; color: #92400e;">
+                                <strong style="color: #92400e; font-size: 1.1rem;">🚨 IDENTICAL TEXT DETECTED:</strong><br><br>
+                                <div style="background: #ffffff; padding: 1rem; border-radius: 6px; border-left: 4px solid #f59e0b; font-family: 'Courier New', monospace; font-size: 0.9rem; line-height: 1.6; color: #1f2937;">
+                                    {display_content}
+                                </div>
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
+                    
+                    # Add character count and match statistics
+                    word_count = len(display_content.split())
                     st.markdown(
                         f"""
-                        <div style="background: #f8fafc; border-left: 4px solid #3b82f6; padding: 1rem; margin: 0.5rem 0 1rem 0; border-radius: 4px; color: #1f2937;">
-                            <strong style="color: #374151;">📝 Matched Text:</strong><br>
-                            <em style="color: #4b5563; font-size: 0.95rem; line-height: 1.5;">"{display_content}"</em>
+                        <div style="background: #e0f2fe; border-left: 4px solid #0288d1; padding: 0.75rem; margin: 0.5rem 0; border-radius: 4px; color: #01579b;">
+                            <strong>📊 Match Statistics:</strong> {len(display_content)} characters, {word_count} words
                         </div>
                         """,
                         unsafe_allow_html=True
@@ -1018,8 +1261,8 @@ def get_cached_embedding_generator(model_name: str = 'sentence-transformers/para
     return EmbeddingGenerator(model_name=model_name, batch_size=batch_size)
 
 
-def run_image_analysis(directory):
-    """Run image plagiarism analysis with proper session state management."""
+def run_image_analysis_concurrent(directory):
+    """Run image plagiarism analysis with enhanced concurrent processing."""
     
     # If already completed, display results
     if st.session_state.image_analysis_complete:
@@ -1046,8 +1289,8 @@ def run_image_analysis(directory):
     with progress_container:
         st.markdown("""
         <div class="progress-container">
-            <span style='font-size:2rem;'>🖼️</span> Finding Images in Your Documents<br>
-            <small>Extracting and comparing images from your PDF files...</small>
+            <span style='font-size:2rem;'>🖼️</span> Finding Images in Your Documents (Concurrent Mode)<br>
+            <small>Using parallel processing for faster image analysis...</small>
         </div>
         """, unsafe_allow_html=True)
         
@@ -1085,45 +1328,58 @@ def run_image_analysis(directory):
                 all_results = []
                 st.session_state.image_analysis_logs = []
                 
-                # Extract images from all PDFs
-                for i, pdf_path in enumerate(pdf_file_paths, 1):
-                    with img_spinner_placeholder:
-                        st.markdown('<div class="spinner-container"><div class="spinner spinner-processing"></div></div>', unsafe_allow_html=True)
+                # Extract images from all PDFs using parallel processing
+                with ThreadPoolExecutor(max_workers=CONCURRENT_CONFIG['max_workers_image']) as executor:
+                    # Submit all PDF processing tasks
+                    future_to_pdf = {
+                        executor.submit(extract_images_from_pdf_worker, extractor, pdf_path): pdf_path 
+                        for pdf_path in pdf_file_paths
+                    }
+                    
+                    completed_pdfs = 0
+                    for future in as_completed(future_to_pdf):
+                        pdf_path = future_to_pdf[future]
+                        pdf_filename = os.path.basename(pdf_path)
                         
-                    pdf_filename = os.path.basename(pdf_path)
-                    results = extractor.extract_images_from_pdf(pdf_path)
-                    all_results.extend(results)
-                    
-                    progress_bar.progress(i / total_pdfs * 0.8)  # 80% for extraction
-                    progress_text.markdown(f"📄 Looking for images in document {i}/{total_pdfs}: {pdf_filename}")
-                    
-                    log_msg = f"📸 Found {len(results)} images in {pdf_filename}"
-                    st.session_state.image_analysis_logs.append(log_msg)
-                    st.markdown(log_msg)
+                        try:
+                            results = future.result()
+                            all_results.extend(results)
+                            
+                            completed_pdfs += 1
+                            progress_bar.progress(completed_pdfs / total_pdfs * 0.8)  # 80% for extraction
+                            progress_text.markdown(f"📄 Processing images in document {completed_pdfs}/{total_pdfs}: {pdf_filename}")
+                            
+                            log_msg = f"📸 Found {len(results)} images in {pdf_filename}"
+                            st.session_state.image_analysis_logs.append(log_msg)
+                            st.markdown(log_msg)
+                            
+                        except Exception as e:
+                            st.error(f"Failed to process images from {pdf_filename}: {str(e)}")
+                            completed_pdfs += 1
                 
                 if not all_results:
                     st.warning("No images were found in the provided PDF files.")
                     st.session_state.image_analysis_complete = True
                     return
             
-                # Initialize the image duplication detector
+                # Initialize the image duplication detector with parallel processing
                 with img_spinner_placeholder:
                     st.markdown('<div class="spinner-container"><div class="spinner spinner-analyzing"></div></div>', unsafe_allow_html=True)
-                progress_text.markdown("📊 Setting up perceptual hash analysis...")
+                progress_text.markdown("📊 Setting up perceptual hash analysis (parallel processing)...")
                 progress_bar.progress(0.85)
                 
                 # Initialize detector and load images
                 detector = ImageDuplicationDetector()
-                detector.load_images(all_results)
+                detector.load_images_parallel(all_results, max_workers=CONCURRENT_CONFIG['max_workers_image'])
                 
                 # Enhanced embedding progress display
                 embedding_container = st.container()
                 with embedding_container:
                     st.markdown("""
                     <div style="padding: 1rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 10px; margin: 1rem 0; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
-                        <h4 style="color: #ffffff; margin: 0; font-weight: bold; text-shadow: 1px 1px 2px rgba(0,0,0,0.3);">🔍 Analyzing Image Fingerprints</h4>
+                        <h4 style="color: #ffffff; margin: 0; font-weight: bold; text-shadow: 1px 1px 2px rgba(0,0,0,0.3);">🔍 Analyzing Image Fingerprints (Parallel)</h4>
                         <p style="color: #ffffff; margin: 0.5rem 0 0 0; font-size: 0.9rem; opacity: 0.95; text-shadow: 1px 1px 2px rgba(0,0,0,0.2);">
-                            Using perceptual hashing to find duplicate and similar images...
+                            Using parallel perceptual hashing to find duplicate and similar images...
                         </p>
                     </div>
                     """, unsafe_allow_html=True)
@@ -1148,28 +1404,28 @@ def run_image_analysis(directory):
                         with emb_spinner_placeholder:
                             st.markdown('<div class="spinner-container"><div class="spinner spinner-loading"></div></div>', unsafe_allow_html=True)
                         embedding_progress.progress(0.1)
-                        embedding_status.markdown(f"🚀 **Getting AI ready to analyze images...**")
-                        embedding_details.info(f"Teaching AI to understand {total} images from your documents...")
+                        embedding_status.markdown(f"🚀 **Getting AI ready to analyze images (parallel)...**")
+                        embedding_details.info(f"Teaching AI to understand {total} images from your documents using multiple workers...")
                         
                     elif stage == "embedding_complete":
                         with emb_spinner_placeholder:
                             st.markdown('<div class="spinner-container"><div class="spinner spinner-analyzing"></div></div>', unsafe_allow_html=True)
                         embedding_progress.progress(0.8)
-                        embedding_status.markdown(f"⚡ **Building image comparison system...**")
-                        embedding_details.success(f"✅ AI has learned to recognize all {total} images!")
+                        embedding_status.markdown(f"⚡ **Building parallel image comparison system...**")
+                        embedding_details.success(f"✅ AI has learned to recognize all {total} images using parallel processing!")
                         
                     elif stage == "finding_duplicates":
                         with emb_spinner_placeholder:
                             st.markdown('<div class="spinner-container"><div class="spinner spinner-finalizing"></div></div>', unsafe_allow_html=True)
                         embedding_progress.progress(0.9)
-                        embedding_status.markdown(f"🔍 **Looking for similar images...**")
-                        embedding_details.info("Comparing images to find potential matches...")
+                        embedding_status.markdown(f"🔍 **Looking for similar images (parallel)...**")
+                        embedding_details.info("Comparing images to find potential matches using parallel computation...")
                         
                     elif stage == "complete":
                         emb_spinner_placeholder.empty()
                         embedding_progress.progress(1.0)
                         embedding_status.markdown(f"🎉 **Image analysis complete!**")
-                        embedding_details.success("Successfully analyzed all images for similarities!")
+                        embedding_details.success("Successfully analyzed all images for similarities using parallel processing!")
                         
                     elif stage == "error":
                         emb_spinner_placeholder.empty()
@@ -1177,16 +1433,16 @@ def run_image_analysis(directory):
                         embedding_status.markdown(f"❌ **Something went wrong...**")
                         embedding_details.error("Could not analyze images. Please try again or check your files.")
                 
-                # Run the hash-based duplicate detection
+                # Run the hash-based duplicate detection with parallel processing
                 try:
                     # Manual progress updates
                     embedding_progress_callback("starting", 0, len(all_results), "Starting analysis")
                     
-                    st.info("🔍 Analyzing image fingerprints for duplicates...")
+                    st.info("🔍 Analyzing image fingerprints for duplicates (parallel processing)...")
                     embedding_progress_callback("finding_duplicates", 0, 0, "Computing perceptual hashes")
                     
-                    # Find duplicates using perceptual hashing (threshold 0.85 for high confidence)
-                    pairs_info = detector.detect_cross_pdf_duplicates(threshold=0.85)
+                    # Find duplicates using perceptual hashing with parallel processing
+                    pairs_info = detector.detect_cross_pdf_duplicates_parallel(threshold=0.85, max_workers=CONCURRENT_CONFIG['max_workers_image'])
                     
                     embedding_progress_callback("complete", 0, 0, "Analysis complete")
                     
@@ -1282,13 +1538,21 @@ def run_image_analysis(directory):
             st.error(f"An error occurred during image analysis: {str(e)}")
             logging.error(f"Image analysis error: {str(e)}")
 
+def run_image_analysis(directory):
+    """Run image plagiarism analysis with proper session state management."""
+    # Use the enhanced concurrent version by default
+    return run_image_analysis_concurrent(directory)
 
-def run_text_analysis(directory, chunk_size=5000, similarity_threshold=0.3):
-    """Run the complete plagiarism text analysis with progress tracking."""
+
+def run_text_analysis_concurrent(directory, chunk_size=5000, similarity_threshold=0.3):
+    """Run the complete plagiarism text analysis with enhanced concurrent processing."""
     import logging
     from src.core.validation import DirectoryValidator, ParameterValidator
     
     logger = logging.getLogger(__name__)
+    
+    # Check system resources and adjust configuration
+    check_system_resources()
     
     # Validate inputs
     try:
@@ -1308,8 +1572,8 @@ def run_text_analysis(directory, chunk_size=5000, similarity_threshold=0.3):
         with progress_container:
             st.markdown("""
             <div class="progress-container">
-                <span style='font-size:2rem;'>🚀</span> Analyzing Your Documents<br>
-                <small>This may take a few minutes depending on document size...</small>
+                <span style='font-size:2rem;'>🚀</span> Analyzing Your Documents (Concurrent Mode)<br>
+                <small>Using parallel processing for faster analysis...</small>
             </div>
             """, unsafe_allow_html=True)
             
@@ -1344,20 +1608,21 @@ def run_text_analysis(directory, chunk_size=5000, similarity_threshold=0.3):
             overall_progress.progress(20)
             st.success(f"✅ Found {pdf_count} PDF documents to analyze")
             
-            # Step 2: Extract content
+            # Step 2: Extract content with parallel processing
             with spinner_placeholder:
                 st.markdown('<div class="spinner-container"><div class="spinner spinner-processing"></div></div>', unsafe_allow_html=True)
-            status_text.info("📄 Reading document content...")
-            step_info.text("Step 2/5: Extracting text from your PDF files")
+            status_text.info("📄 Reading document content (parallel processing)...")
+            step_info.text("Step 2/5: Extracting text from your PDF files using multiple workers")
             
-            chunks = pdf_handler.extract_page_chunks(chunk_size=chunk_size)
+            # Use enhanced parallel PDF processing
+            chunks = pdf_handler.extract_page_chunks_enhanced(chunk_size=chunk_size, max_workers=CONCURRENT_CONFIG['max_workers_pdf'])
             overall_progress.progress(40)
             
-            # Step 3: Validate per-PDF content and generate embeddings
+            # Step 3: Validate per-PDF content and generate embeddings with parallel processing
             with spinner_placeholder:
                 st.markdown('<div class="spinner-container"><div class="spinner spinner-analyzing"></div></div>', unsafe_allow_html=True)
-            status_text.info("🧠 Checking which PDFs contain readable text and preparing AI...")
-            step_info.text("Step 3/5: Validating text content and preparing embeddings")
+            status_text.info("🧠 Checking which PDFs contain readable text and preparing AI (parallel)...")
+            step_info.text("Step 3/5: Validating text content and preparing embeddings with parallel processing")
             
             # Filter out PDFs that have no extractable text
             chunks_with_text = ContentValidator.filter_pdfs_with_text(chunks, min_total_chars=20)
@@ -1386,8 +1651,13 @@ def run_text_analysis(directory, chunk_size=5000, similarity_threshold=0.3):
                 st.info("You need at least 2 PDFs that contain selectable text. Consider OCR for scanned PDFs.")
                 return None, None, None
 
+            # Use enhanced parallel embedding generation
             embedder = get_cached_embedding_generator()
-            embeddings = embedder.generate_embeddings(chunks_with_text)
+            embeddings = embedder.generate_embeddings_enhanced(
+                chunks_with_text, 
+                max_workers=CONCURRENT_CONFIG['max_workers_embedding'],
+                batch_size=CONCURRENT_CONFIG['batch_size_embedding']
+            )
             overall_progress.progress(60)
             
             # Check if any embeddings were generated
@@ -1418,18 +1688,19 @@ def run_text_analysis(directory, chunk_size=5000, similarity_threshold=0.3):
                 logger.error(f"Only {len(valid_embeddings)} PDFs have valid embeddings - cannot proceed")
                 return None, None, None
             
-            # Step 4: Compute similarities
+            # Step 4: Compute similarities with parallel processing
             with spinner_placeholder:
                 st.markdown('<div class="spinner-container"><div class="spinner spinner-analyzing"></div></div>', unsafe_allow_html=True)
-            status_text.info("🔍 Comparing documents for similarities...")
-            step_info.text("Step 4/5: Finding matching content between documents")
+            status_text.info("🔍 Comparing documents for similarities (parallel processing)...")
+            step_info.text("Step 4/5: Finding matching content between documents using parallel computation")
             
             similarity_calculator = PDFSimilarityCalculator(valid_embeddings)
-            semantic_scores = similarity_calculator.compute_all_pdf_similarities()
+            semantic_scores = similarity_calculator.compute_all_pdf_similarities_parallel(max_workers=CONCURRENT_CONFIG['max_workers_similarity'])
             
-            seq_similarity_calculator = SequenceSimilarityCalculator()
             # Use only the PDFs with readable text for sequence similarity too
-            sequence_scores = seq_similarity_calculator.compute_all_pdf_similarities({k: chunks_with_text[k] for k in valid_embeddings.keys()})
+            chunks_for_sequence = {k: chunks_with_text[k] for k in valid_embeddings.keys()}
+            seq_similarity_calculator = SequenceSimilarityCalculator(chunks_for_sequence)
+            sequence_scores = seq_similarity_calculator.compute_all_pdf_similarities_parallel(max_workers=CONCURRENT_CONFIG['max_workers_similarity'])
             
             overall_progress.progress(80)
             
@@ -1449,7 +1720,7 @@ def run_text_analysis(directory, chunk_size=5000, similarity_threshold=0.3):
             st.markdown("""
             <div class="success-card">
                 <h3>🎉 Analysis Complete!</h3>
-                <p>Your documents have been analyzed using advanced AI techniques.</p>
+                <p>Your documents have been analyzed using advanced AI techniques with parallel processing.</p>
             </div>
             """, unsafe_allow_html=True)
             
@@ -1457,6 +1728,7 @@ def run_text_analysis(directory, chunk_size=5000, similarity_threshold=0.3):
             st.session_state.semantic_scores = semantic_scores
             st.session_state.sequence_scores = sequence_scores
             st.session_state.exact_matches = exact_matches
+            st.session_state.chunks_with_text = chunks_with_text  # Store chunks for content display
             
             return semantic_scores, sequence_scores, exact_matches
             
@@ -1465,6 +1737,11 @@ def run_text_analysis(directory, chunk_size=5000, similarity_threshold=0.3):
         st.error(f"❌ Analysis failed: {str(e)}")
         logging.error(f"Analysis error: {str(e)}")
         return None, None, None
+
+def run_text_analysis(directory, chunk_size=5000, similarity_threshold=0.3):
+    """Run the complete plagiarism text analysis with progress tracking."""
+    # Use the enhanced concurrent version by default
+    return run_text_analysis_concurrent(directory, chunk_size, similarity_threshold)
 
 
 def main():
@@ -1581,7 +1858,43 @@ def main():
                 st.session_state.semantic_scores, 
                 st.session_state.sequence_scores
             )
-            display_exact_matches(st.session_state.exact_matches)
+            
+            # Add toggle for enhanced content display
+            st.markdown("---")
+            st.markdown("### 🔍 Detailed Content Analysis")
+            
+            # Create tabs for different types of analysis
+            tab1, tab2, tab3 = st.tabs(["📊 Exact Matches", "🧠 Semantic Similarity", "📈 Overview"])
+            
+            with tab1:
+                display_exact_matches(st.session_state.exact_matches)
+            
+            with tab2:
+                # Get chunks data from session state if available
+                chunks_data = getattr(st.session_state, 'chunks_with_text', {})
+                if chunks_data:
+                    display_semantic_similarity_with_content(
+                        st.session_state.semantic_scores, 
+                        chunks_data, 
+                        threshold=0.7
+                    )
+                else:
+                    st.info("📝 Semantic similarity content analysis requires chunks data. Run a fresh analysis to see detailed content.")
+            
+            with tab3:
+                st.markdown("### 📊 Analysis Summary")
+                st.markdown("""
+                **Analysis Types:**
+                - **📊 Exact Matches:** Identical text blocks found across documents
+                - **🧠 Semantic Similarity:** Content with similar meaning and context
+                - **📈 Overview:** Statistical summary and similarity matrices
+                
+                **Content Display Features:**
+                - ✅ Shows actual matched text content
+                - ✅ Expandable sections for long content
+                - ✅ Character and word count statistics
+                - ✅ Sample content from similar documents
+                """)
         
         # Display image analysis section if started (independent of text analysis)
         if st.session_state.image_analysis_started:

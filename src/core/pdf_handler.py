@@ -361,6 +361,72 @@ class PDFHandler(LoggerMixin):
         chunk_size=lambda x: ParameterValidator.validate_positive_integer(x, "chunk_size", min_value=100, max_value=50000)
     )
     @handle_exceptions(default_return={})
+    def extract_page_chunks_enhanced(self, chunk_size: int = 5000, max_workers: int = 4) -> Dict[str, List[str]]:
+        """
+        Enhanced parallel extraction of text chunks from PDFs with improved error handling and progress tracking.
+        
+        Args:
+            chunk_size: Size of text chunks to create (100-50000 characters)
+            max_workers: Maximum number of parallel workers
+            
+        Returns:
+            Dictionary mapping normalized PDF filenames to lists of text chunks
+            
+        Raises:
+            ParameterValidationError: If chunk_size is invalid
+            FileValidationError: If PDF files cannot be processed
+        """
+        with self.log_operation("extract_page_chunks_enhanced", chunk_size=chunk_size, max_workers=max_workers, file_count=len(self.pdf_files)):
+            if not self.pdf_files:
+                self.logger.warning("No PDF files to process")
+                return {}
+            
+            # Validate max_workers parameter
+            max_workers = min(max_workers, len(self.pdf_files), os.cpu_count() or 1)
+            self.logger.info(f"Using {max_workers} workers for PDF processing")
+            
+            chunks = {}
+            successful_files = 0
+            failed_files = 0
+            
+            # Use ThreadPoolExecutor for parallel processing
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submit all PDF processing tasks
+                future_to_pdf = {
+                    executor.submit(self._extract_chunks_from_pdf, pdf_path, chunk_size): pdf_path 
+                    for pdf_path in self.pdf_files
+                }
+                
+                # Process completed tasks as they finish
+                for future in as_completed(future_to_pdf):
+                    pdf_path = future_to_pdf[future]
+                    safe_filename = safe_filename_encode(os.path.basename(pdf_path))
+                    
+                    try:
+                        normalized_filename, file_chunks = future.result()
+                        chunks[normalized_filename] = file_chunks
+                        
+                        if file_chunks:
+                            successful_files += 1
+                            self.logger.debug(f"Successfully processed {safe_filename}: {len(file_chunks)} chunks")
+                        else:
+                            failed_files += 1
+                            self.logger.warning(f"No chunks extracted from {safe_filename}")
+                            
+                    except Exception as e:
+                        failed_files += 1
+                        self.logger.error(f"Failed to process PDF {safe_filename}: {str(e)}")
+                        # Add empty entry to maintain consistency
+                        normalized_filename = normalize_filename(os.path.basename(pdf_path))
+                        chunks[normalized_filename] = []
+            
+            self.logger.info(f"Enhanced chunk extraction completed: {successful_files} successful, {failed_files} failed")
+            return chunks
+
+    @validate_inputs(
+        chunk_size=lambda x: ParameterValidator.validate_positive_integer(x, "chunk_size", min_value=100, max_value=50000)
+    )
+    @handle_exceptions(default_return={})
     def extract_page_chunks(self, chunk_size: int = 5000) -> Dict[str, List[str]]:
         """
         Extracts text chunks from each PDF using DocumentChunking from phidata, in parallel.

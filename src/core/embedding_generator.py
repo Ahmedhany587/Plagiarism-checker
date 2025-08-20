@@ -204,6 +204,105 @@ class EmbeddingGenerator(LoggerMixin):
         chunks=lambda x: x if isinstance(x, dict) and all(isinstance(k, str) and isinstance(v, list) for k, v in x.items()) else None
     )
     @handle_exceptions(default_return={})
+    def generate_embeddings_enhanced(self, chunks: Dict[str, List[str]], max_workers: int = 2, batch_size: int = 32) -> Dict[str, List[Any]]:
+        """
+        Enhanced parallel embedding generation with improved resource management and error handling.
+        
+        Args:
+            chunks: Dictionary mapping PDF names to lists of page content
+            max_workers: Maximum number of parallel workers
+            batch_size: Batch size for embedding generation
+            
+        Returns:
+            Dictionary mapping PDF names to lists of embeddings
+            
+        Raises:
+            ParameterValidationError: If chunks parameter is invalid
+        """
+        with self.log_operation("generate_embeddings_enhanced", total_pdfs=len(chunks), max_workers=max_workers, batch_size=batch_size):
+            if not chunks:
+                self.logger.warning("No chunks provided for embedding generation")
+                return {}
+            
+            # Validate and adjust parameters
+            max_workers = min(max_workers, len(chunks), os.cpu_count() or 1)
+            batch_size = min(batch_size, 64)  # Cap batch size to prevent memory issues
+            
+            self.logger.info(f"Enhanced embedding generation: {len(chunks)} PDFs, {max_workers} workers, batch_size={batch_size}")
+            
+            embeddings = {}
+            successful_pdfs = 0
+            failed_pdfs = 0
+            
+            # Prepare work items
+            to_process = [(pdf_name, pages, batch_size) for pdf_name, pages in chunks.items()]
+            
+            if max_workers > 1:
+                # Multi-process approach with enhanced error handling
+                try:
+                    with multiprocessing.Pool(
+                        processes=max_workers,
+                        initializer=_init_worker,
+                        initargs=(self.model_name, self.device, self.hf_token)
+                    ) as pool:
+                        
+                        # Use imap_unordered for better load balancing
+                        for pdf_name, pdf_embeddings in pool.imap_unordered(_embed_pdf_worker, to_process):
+                            if pdf_embeddings:
+                                embeddings[pdf_name] = pdf_embeddings
+                                successful_pdfs += 1
+                                self.logger.debug(f"Successfully generated embeddings for {pdf_name}")
+                            else:
+                                failed_pdfs += 1
+                                self.logger.warning(f"Failed to generate embeddings for {pdf_name}")
+                        
+                        self.logger.info(f"Multi-process embedding completed: {successful_pdfs} successful, {failed_pdfs} failed")
+                        
+                except Exception as e:
+                    self.logger.error(f"Multi-process embedding failed: {str(e)}. Falling back to single process.")
+                    # Fallback to single process
+                    embeddings = {}
+                    successful_pdfs = 0
+                    failed_pdfs = 0
+                    
+                    for pdf_name, pages, _ in to_process:
+                        try:
+                            pdf_embeddings = self._embed_pdf_single(pdf_name, pages)
+                            if pdf_embeddings:
+                                embeddings[pdf_name] = pdf_embeddings
+                                successful_pdfs += 1
+                            else:
+                                failed_pdfs += 1
+                        except Exception as pdf_error:
+                            failed_pdfs += 1
+                            self.logger.error(f"Failed to generate embeddings for {pdf_name}: {str(pdf_error)}")
+            else:
+                # Single process approach
+                self.logger.info("Using single-process embedding generation")
+                
+                for pdf_name, pages, _ in to_process:
+                    try:
+                        pdf_embeddings = self._embed_pdf_single(pdf_name, pages)
+                        if pdf_embeddings:
+                            embeddings[pdf_name] = pdf_embeddings
+                            successful_pdfs += 1
+                        else:
+                            failed_pdfs += 1
+                    except Exception as e:
+                        failed_pdfs += 1
+                        self.logger.error(f"Failed to generate embeddings for {pdf_name}: {str(e)}")
+                
+                self.logger.info(f"Single-process embedding completed: {successful_pdfs} successful, {failed_pdfs} failed")
+            
+            total_embeddings = sum(len(emb) for emb in embeddings.values())
+            self.logger.info(f"Enhanced embedding generation complete: {len(embeddings)} PDFs, {total_embeddings} total embeddings")
+            
+            return embeddings
+
+    @validate_inputs(
+        chunks=lambda x: x if isinstance(x, dict) and all(isinstance(k, str) and isinstance(v, list) for k, v in x.items()) else None
+    )
+    @handle_exceptions(default_return={})
     def generate_embeddings(self, chunks: Dict[str, List[str]]) -> Dict[str, List[Any]]:
         """
         Generates embeddings for each text chunk (each page) from each PDF, with caching and progress tracking.

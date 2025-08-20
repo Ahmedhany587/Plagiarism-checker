@@ -1,9 +1,9 @@
 import os
-from pdf_handler import PDFHandler
-from embedding_generator import EmbeddingGenerator
-from semantic_similairty import PDFSimilarityCalculator
-from sequence_similarity import SequenceSimilarityCalculator
-from exact_match import ExactMatchDetector
+from src.core.pdf_handler import PDFHandler
+from src.core.embedding_generator import EmbeddingGenerator
+from src.core.semantic_similarity import PDFSimilarityCalculator
+from src.core.sequence_similarity import SequenceSimilarityCalculator
+from src.core.exact_match import ExactMatchDetector
 
 def main():
     # Path to directory containing PDF
@@ -32,8 +32,8 @@ def main():
         print(f"{pdfA} <-> {pdfB}: Max: {max_sim:.2%}, Min: {min_sim:.2%}, Mean: {mean_sim:.2%}")
 
     # Step 4: Compute sequence similarity between all PDF pairs
-    seq_similarity_calculator = SequenceSimilarityCalculator()
-    sequence_similarity_scores = seq_similarity_calculator.compute_all_pdf_similarities(chunks)
+    seq_similarity_calculator = SequenceSimilarityCalculator(chunks)
+    sequence_similarity_scores = seq_similarity_calculator.compute_all_pdf_similarities()
 
     # Display sequence similarity results
     print("\nSequence Similarity Between PDFs (max, min, mean):")

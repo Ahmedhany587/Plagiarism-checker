@@ -1,8 +1,10 @@
-from typing import Dict, Tuple, List, Any
+from typing import Dict, Tuple, List, Any, Optional
 import torch
 import torch.nn.functional as F
 import itertools
 from tqdm import tqdm
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .logging_config import LoggerMixin
 from .validation import (
@@ -64,6 +66,80 @@ class PDFSimilarityCalculator(LoggerMixin):
             
             self.logger.info(f"Initialized similarity calculator for {len(embeddings)} PDFs")
 
+    @handle_exceptions(default_return={})
+    def compute_pairwise_similarity_with_content(self, emb1: torch.Tensor, emb2: torch.Tensor, 
+                                               text1: List[str], text2: List[str], 
+                                               threshold: float = 0.7) -> Tuple[float, float, float, List[Tuple[str, str, float]]]:
+        """
+        Computes similarity scores and returns the most similar text segments above a threshold.
+
+        Args:
+            emb1: Tensor of shape (N, D) for PDF A
+            emb2: Tensor of shape (M, D) for PDF B
+            text1: List of text chunks for PDF A
+            text2: List of text chunks for PDF B
+            threshold: Minimum similarity threshold to include text segments
+            
+        Returns:
+            Tuple of (max_sim, min_sim, mean_sim, similar_segments)
+            where similar_segments is a list of (text1, text2, similarity_score)
+        """
+        try:
+            # Ensure emb1 and emb2 are tensors (not lists)
+            if isinstance(emb1, list):
+                emb1 = torch.stack([torch.as_tensor(e) for e in emb1])
+            if isinstance(emb2, list):
+                emb2 = torch.stack([torch.as_tensor(e) for e in emb2])
+            
+            # Validate tensor dimensions
+            if emb1.dim() != 2 or emb2.dim() != 2:
+                raise ValueError(f"Expected 2D tensors, got shapes {emb1.shape} and {emb2.shape}")
+            
+            if emb1.size(1) != emb2.size(1):
+                raise ValueError(f"Embedding dimensions don't match: {emb1.size(1)} vs {emb2.size(1)}")
+            
+            # Normalize embeddings
+            emb1 = F.normalize(emb1, p=2, dim=1)
+            emb2 = F.normalize(emb2, p=2, dim=1)
+
+            similarities = []
+            similar_segments = []
+
+            # Compute similarities in batches for memory efficiency
+            for i in range(0, emb1.size(0), self.batch_size):
+                batch = emb1[i:i + self.batch_size]  # (batch_size x D)
+                sim_chunk = torch.mm(batch, emb2.T)  # (batch_size x M)
+                similarities.append(sim_chunk)
+
+            sim_matrix = torch.cat(similarities, dim=0)  # (N x M)
+            
+            # Rescale cosine similarity from [-1, 1] to [0, 1]
+            sim_matrix = (sim_matrix + 1) / 2
+            
+            # Find similar segments above threshold
+            for i in range(sim_matrix.size(0)):
+                for j in range(sim_matrix.size(1)):
+                    similarity_score = sim_matrix[i, j].item()
+                    if similarity_score >= threshold:
+                        # Get corresponding text segments
+                        text_segment_1 = text1[i] if i < len(text1) else "Text segment not available"
+                        text_segment_2 = text2[j] if j < len(text2) else "Text segment not available"
+                        similar_segments.append((text_segment_1, text_segment_2, similarity_score))
+            
+            # Sort by similarity score (highest first)
+            similar_segments.sort(key=lambda x: x[2], reverse=True)
+            
+            max_sim = sim_matrix.max().item()
+            min_sim = sim_matrix.min().item()
+            mean_sim = sim_matrix.mean().item()
+
+            self.logger.debug(f"Computed similarities - max: {max_sim:.3f}, min: {min_sim:.3f}, mean: {mean_sim:.3f}, similar segments: {len(similar_segments)}")
+            return max_sim, min_sim, mean_sim, similar_segments
+            
+        except Exception as e:
+            self.logger.error(f"Failed to compute pairwise similarity with content: {str(e)}")
+            raise RuntimeError(f"Similarity computation failed: {str(e)}")
+
     @handle_exceptions(default_return=(0.0, 0.0, 0.0))
     def compute_pairwise_similarity(self, emb1: torch.Tensor, emb2: torch.Tensor) -> Tuple[float, float, float]:
         """
@@ -124,6 +200,95 @@ class PDFSimilarityCalculator(LoggerMixin):
             self.logger.error(f"Failed to compute pairwise similarity: {str(e)}")
             raise RuntimeError(f"Similarity computation failed: {str(e)}")
 
+
+    @handle_exceptions(default_return={})
+    def compute_all_pdf_similarities_parallel(self, max_workers: int = 4) -> Dict[Tuple[str, str], Tuple[float, float, float]]:
+        """
+        Enhanced parallel computation of many-to-many PDF semantic similarity with improved performance.
+
+        Args:
+            max_workers: Maximum number of parallel workers for similarity computation
+            
+        Returns:
+            Dictionary with key (pdfA, pdfB) and value as tuple of (max_sim, min_sim, mean_sim)
+        """
+        with self.log_operation("compute_all_similarities_parallel", max_workers=max_workers):
+            similarity_scores = {}
+            pdf_pairs = list(itertools.combinations(self.embeddings.keys(), 2))
+            
+            if not pdf_pairs:
+                self.logger.warning("No PDF pairs found for similarity computation")
+                return {}
+            
+            # Validate and adjust max_workers
+            max_workers = min(max_workers, len(pdf_pairs), os.cpu_count() or 1)
+            self.logger.info(f"Computing similarities for {len(pdf_pairs)} PDF pairs using {max_workers} workers")
+            
+            successful_pairs = 0
+            failed_pairs = 0
+            
+            # Use ThreadPoolExecutor for parallel similarity computation
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submit all similarity computation tasks
+                future_to_pair = {
+                    executor.submit(self._compute_pair_similarity_worker, pdf_pair): pdf_pair 
+                    for pdf_pair in pdf_pairs
+                }
+                
+                # Process completed tasks as they finish
+                for future in as_completed(future_to_pair):
+                    pdf_pair = future_to_pair[future]
+                    
+                    try:
+                        result = future.result()
+                        if result is not None:
+                            similarity_scores[pdf_pair] = result
+                            successful_pairs += 1
+                            self.logger.debug(f"Computed similarity for {pdf_pair}: mean={result[2]:.3f}")
+                        else:
+                            failed_pairs += 1
+                            self.logger.warning(f"Failed to compute similarity for pair {pdf_pair}")
+                            
+                    except Exception as e:
+                        failed_pairs += 1
+                        self.logger.error(f"Exception computing similarity for pair {pdf_pair}: {str(e)}")
+                        continue
+            
+            self.logger.info(f"Parallel similarity computation completed: {successful_pairs} successful, {failed_pairs} failed")
+            return similarity_scores
+
+    def _compute_pair_similarity_worker(self, pdf_pair: Tuple[str, str]) -> Optional[Tuple[float, float, float]]:
+        """
+        Worker function for computing similarity between a single PDF pair.
+        
+        Args:
+            pdf_pair: Tuple of (pdfA, pdfB) to compare
+            
+        Returns:
+            Tuple of (max_sim, min_sim, mean_sim) or None if computation fails
+        """
+        try:
+            pdfA, pdfB = pdf_pair
+            embA = self.embeddings.get(pdfA, [])
+            embB = self.embeddings.get(pdfB, [])
+            
+            # Skip if either PDF has no embeddings
+            if not embA or not embB:
+                self.logger.warning(f"Skipping pair ({pdfA}, {pdfB}): missing embeddings")
+                return None
+            
+            # Convert lists to tensors if needed
+            if isinstance(embA, list):
+                embA = torch.stack([torch.as_tensor(e) for e in embA])
+            if isinstance(embB, list):
+                embB = torch.stack([torch.as_tensor(e) for e in embB])
+            
+            max_sim, min_sim, mean_sim = self.compute_pairwise_similarity(embA, embB)
+            return (max_sim, min_sim, mean_sim)
+            
+        except Exception as e:
+            self.logger.error(f"Failed to compute similarity for pair {pdf_pair}: {str(e)}")
+            return None
 
     @handle_exceptions(default_return={})
     def compute_all_pdf_similarities(self) -> Dict[Tuple[str, str], Tuple[float, float, float]]:

@@ -19,6 +19,9 @@ python-dotenv>=1.0.0
 tqdm>=4.66.0
 psutil>=6.1.0
 
+# Concurrent processing and system monitoring
+concurrent-futures>=3.1.1
+
 # Image Processing (for image analysis features)
 Pillow>=11.0.0
 imagehash>=4.3.0
