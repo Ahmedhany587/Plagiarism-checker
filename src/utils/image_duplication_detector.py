@@ -59,8 +59,8 @@ class ImageDuplicationDetector:
                     loaded_data = future.result()
                     if loaded_data is not None:
                         img, fp, pdf, page, img_idx = loaded_data
-                images.append(img)
-                self.filepaths.append(fp)
+                        images.append(img)
+                        self.filepaths.append(fp)
                         self.pdf_names.append(pdf)
                         self.pages.append(page)
                         self.image_indices.append(img_idx)
@@ -71,7 +71,7 @@ class ImageDuplicationDetector:
                     else:
                         failed_loads += 1
                     
-            except Exception as e:
+                except Exception as e:
                     failed_loads += 1
                     self.logger.error(f"Failed to load image from {result.get('filepath', 'unknown')}: {str(e)}")
         

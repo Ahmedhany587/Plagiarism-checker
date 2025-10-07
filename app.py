@@ -1099,7 +1099,7 @@ def display_semantic_similarity_with_content(semantic_scores, chunks_with_text, 
                         st.markdown(f"""
                         <div style="background: #fef3c7; border: 1px solid #f59e0b; padding: 1rem; border-radius: 8px;">
                             <strong>📄 {pdfA_short} (Sample Content):</strong><br>
-                            <div style="background: #ffffff; padding: 0.5rem; border-radius: 4px; margin-top: 0.5rem; font-size: 0.9rem; line-height: 1.4;">
+                            <div style="background: #ffffff; padding: 0.5rem; border-radius: 4px; margin-top: 0.5rem; font-size: 0.9rem; line-height: 1.4; color: #1f2937;">
                                 {sampleA}
                             </div>
                         </div>
@@ -1109,7 +1109,7 @@ def display_semantic_similarity_with_content(semantic_scores, chunks_with_text, 
                         st.markdown(f"""
                         <div style="background: #dbeafe; border: 1px solid #3b82f6; padding: 1rem; border-radius: 8px;">
                             <strong>📄 {pdfB_short} (Sample Content):</strong><br>
-                            <div style="background: #ffffff; padding: 0.5rem; border-radius: 4px; margin-top: 0.5rem; font-size: 0.9rem; line-height: 1.4;">
+                            <div style="background: #ffffff; padding: 0.5rem; border-radius: 4px; margin-top: 0.5rem; font-size: 0.9rem; line-height: 1.4; color: #1f2937;">
                                 {sampleB}
                             </div>
                         </div>
