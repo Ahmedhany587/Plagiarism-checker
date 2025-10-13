@@ -1,5 +1,4 @@
 import os
-import uuid
 import shutil
 import logging
 import tempfile
@@ -10,9 +9,8 @@ from contextlib import contextmanager
 
 import fitz  # PyMuPDF
 from PIL import Image
-import numpy as np
 import imagehash
-import matplotlib.pyplot as plt
+import numpy as np
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -21,25 +19,31 @@ logger = logging.getLogger(__name__)
 
 
 class PDFImageExtractor:
-    """Extracts relevant and unique images from PDF documents using temporary storage."""
+    """Extracts all unique images from PDF documents using temporary storage."""
 
     def __init__(
         self,
         out_dir: Optional[Union[str, Path]] = None,
-        min_byte_size: int = 1024,
+        min_std_dev: float = 10.0,
         min_width: int = 50,
         min_height: int = 50,
-        std_threshold: float = 10.0,
     ):
+        """
+        Initialize PDF Image Extractor.
+        
+        Args:
+            out_dir: Output directory for extracted images (None = temp directory)
+            min_std_dev: Minimum color variance to consider image relevant (default: 10.0)
+                        Images with lower variance are considered plain colors and filtered out
+            min_width: Minimum image width in pixels (default: 50)
+            min_height: Minimum image height in pixels (default: 50)
+        """
         self._out_dir_path = Path(out_dir) if out_dir else None
         self._temp_dir_manager = None
         self.out_dir = None
-        
-        self.min_byte_size = min_byte_size
+        self.min_std_dev = min_std_dev
         self.min_width = min_width
         self.min_height = min_height
-        self.std_threshold = std_threshold
-        self.seen_hashes = set()
 
     def __enter__(self):
         """Context manager entry - sets up output directory."""
@@ -68,21 +72,9 @@ class PDFImageExtractor:
 
     @classmethod
     @contextmanager
-    def create_temp_extractor(
-        cls,
-        min_byte_size: int = 1024,
-        min_width: int = 50,
-        min_height: int = 50,
-        std_threshold: float = 10.0,
-    ):
+    def create_temp_extractor(cls):
         """Convenience context manager factory for temporary extraction."""
-        with cls(
-            out_dir=None,
-            min_byte_size=min_byte_size,
-            min_width=min_width,
-            min_height=min_height,
-            std_threshold=std_threshold,
-        ) as extractor:
+        with cls(out_dir=None) as extractor:
             yield extractor
 
     @classmethod
@@ -90,32 +82,55 @@ class PDFImageExtractor:
     def create_permanent_extractor(
         cls,
         out_dir: Union[str, Path],
-        min_byte_size: int = 1024,
-        min_width: int = 50,
-        min_height: int = 50,
-        std_threshold: float = 10.0,
     ):
         """Convenience context manager factory for permanent directory extraction."""
-        with cls(
-            out_dir=out_dir,
-            min_byte_size=min_byte_size,
-            min_width=min_width,
-            min_height=min_height,
-            std_threshold=std_threshold,
-        ) as extractor:
+        with cls(out_dir=out_dir) as extractor:
             yield extractor
 
     def is_image_relevant(self, image_bytes: bytes) -> bool:
-        """Determines whether an image is relevant based on size and visual content."""
-        if len(image_bytes) < self.min_byte_size:
-            return False
+        """
+        Checks if the image is relevant for plagiarism detection.
+        
+        Filters out:
+        - Plain/solid color images (low color variance)
+        - Very small images (likely decorative elements)
+        - Invalid images
+        
+        Args:
+            image_bytes: Image data as bytes
+        
+        Returns:
+            True if image is relevant, False if it should be filtered out
+        """
         try:
             img = Image.open(BytesIO(image_bytes))
-            if img.width < self.min_width or img.height < self.min_height:
+            
+            # Filter 1: Check image size (skip very small images)
+            width, height = img.size
+            if width < self.min_width or height < self.min_height:
+                logger.debug(f"Skipping small image: {width}x{height} pixels")
                 return False
-            gray = np.array(img.convert("L"))
-            return np.std(gray) >= self.std_threshold
-        except Exception:
+            
+            # Filter 2: Check for plain/solid color images
+            # Convert to RGB if needed and then to numpy array
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            
+            img_array = np.array(img)
+            
+            # Calculate standard deviation for each color channel
+            std_devs = np.std(img_array, axis=(0, 1))
+            avg_std = np.mean(std_devs)
+            
+            # If average standard deviation is too low, it's a plain color image
+            if avg_std < self.min_std_dev:
+                logger.debug(f"Skipping plain color image (std dev: {avg_std:.2f})")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            logger.debug(f"Error checking image relevance: {e}")
             return False
 
     def get_phash(self, image_bytes: bytes) -> Optional[str]:
@@ -127,7 +142,7 @@ class PDFImageExtractor:
             return None
 
     def extract_images_from_pdf(self, pdf_path: str) -> List[dict]:
-        """Extracts relevant and unique images from a given PDF file."""
+        """Extracts all unique images from a given PDF file."""
         if self.out_dir is None:
             raise RuntimeError("PDFImageExtractor must be used as a context manager. Use 'with PDFImageExtractor(...) as extractor:'")
         
@@ -143,21 +158,48 @@ class PDFImageExtractor:
             return results
 
         base_name = Path(pdf_path).stem
+        
+        # Reset seen_hashes for each PDF to allow cross-PDF duplicate detection
+        # This ensures the same image in different PDFs is extracted from both
+        pdf_seen_hashes = set()
+        
+        # Tracking counters for filtering statistics
+        total_images = 0
+        filtered_small = 0
+        filtered_plain = 0
+        filtered_duplicate = 0
 
         for page_num, page in enumerate(doc, start=1):
             for idx, img in enumerate(page.get_images(full=True), start=1):
+                total_images += 1
                 xref = img[0]
                 data = doc.extract_image(xref)
                 img_bytes = data.get("image")
 
-                if not img_bytes or not self.is_image_relevant(img_bytes):
+                if not img_bytes:
+                    continue
+                
+                # Check if image is relevant (filters plain colors and small images)
+                if not self.is_image_relevant(img_bytes):
+                    # Try to determine why it was filtered for statistics
+                    try:
+                        img = Image.open(BytesIO(img_bytes))
+                        if img.size[0] < self.min_width or img.size[1] < self.min_height:
+                            filtered_small += 1
+                        else:
+                            filtered_plain += 1
+                    except:
+                        pass
                     continue
 
                 phash = self.get_phash(img_bytes)
-                if not phash or phash in self.seen_hashes:
+                # Only skip if duplicate within the SAME PDF (not across PDFs)
+                if not phash or phash in pdf_seen_hashes:
+                    if phash in pdf_seen_hashes:
+                        filtered_duplicate += 1
                     continue
 
-                self.seen_hashes.add(phash)
+                pdf_seen_hashes.add(phash)
 
                 ext = data.get("ext", "png")
                 filename = f"{base_name}_p{page_num}_i{idx}.{ext}"
@@ -174,7 +216,14 @@ class PDFImageExtractor:
                 })
 
         doc.close()
-        logger.info(f"Extracted {len(results)} images from {pdf_path}")
+        
+        # Log extraction summary with filtering statistics
+        filtered_total = filtered_small + filtered_plain + filtered_duplicate
+        logger.info(
+            f"Extracted {len(results)} images from {pdf_path} "
+            f"(Total: {total_images}, Filtered: {filtered_total} "
+            f"[{filtered_small} too small, {filtered_plain} plain color, {filtered_duplicate} duplicates])"
+        )
         return results
 
 
