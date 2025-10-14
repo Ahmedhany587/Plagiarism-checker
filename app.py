@@ -379,6 +379,10 @@ def initialize_app():
         text-shadow: none !important;
     }
     
+    .success-card p {
+        color: #065f46 !important;
+    }
+    
     /* Enhanced warning cards */
     .warning-card {
         background: var(--warning-gradient) !important;
@@ -402,6 +406,11 @@ def initialize_app():
         opacity: 0.8;
     }
     
+    .warning-card h3, .warning-card p {
+        color: #ffffff !important;
+        text-shadow: 1px 1px 3px rgba(0,0,0,0.3) !important;
+    }
+    
     /* Enhanced info cards */
     .info-card {
         background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(147, 197, 253, 0.1) 100%);
@@ -421,8 +430,16 @@ def initialize_app():
         margin-bottom: 1rem !important;
     }
     
+    .info-card p {
+        color: #1f2937 !important;
+    }
+    
     .info-card ul {
-        color: var(--text-secondary) !important;
+        color: #4b5563 !important;
+    }
+    
+    .info-card li {
+        color: #4b5563 !important;
     }
     
     /* Enhanced similarity badges */
@@ -534,6 +551,19 @@ def initialize_app():
         box-shadow: var(--shadow-md);
         position: relative;
         overflow: hidden;
+        color: #1f2937;
+        font-weight: 600;
+        font-size: 1.1rem;
+        text-align: center;
+    }
+    
+    .progress-container * {
+        color: #1f2937 !important;
+    }
+    
+    .progress-container small {
+        color: #4b5563 !important;
+        font-size: 0.9rem;
     }
     
     .progress-container::before {
@@ -1122,8 +1152,8 @@ def display_semantic_similarity_with_content(semantic_scores, chunks_with_text, 
                     """, unsafe_allow_html=True)
 
 def display_exact_matches(exact_matches):
-    """Display exact match results."""
-    st.markdown("## 📊 Exact Copy Detection Results")
+    """Display exact match results in a clean, user-friendly way."""
+    st.markdown("## 📋 Exact Copy Detection")
     
     if not exact_matches:
         st.markdown("""
@@ -1134,14 +1164,6 @@ def display_exact_matches(exact_matches):
         """, unsafe_allow_html=True)
         return
     
-    st.markdown(f"""
-    <div class="warning-card">
-        <h3>🚨 Identical Text Found</h3>
-        <p>Found <strong>{len(exact_matches)}</strong> cases where text appears to be copied exactly.</p>
-        <p>You may want to review these matches.</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
     # Group matches by document pair
     matches_by_pair = {}
     for match in exact_matches:
@@ -1151,103 +1173,114 @@ def display_exact_matches(exact_matches):
             matches_by_pair[pair_key] = []
         matches_by_pair[pair_key].append((chunkA, chunkB, content))
     
+    # Summary card
+    total_pairs = len(matches_by_pair)
+    total_matches = len(exact_matches)
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #fff5f5 0%, #ffe4e6 100%); 
+                border-left: 4px solid #ef4444; 
+                padding: 1.5rem; 
+                border-radius: 12px; 
+                margin-bottom: 2rem;">
+        <h4 style="margin: 0 0 0.5rem 0; color: #dc2626;">📊 {total_matches} Identical Text Block{'' if total_matches == 1 else 's'} Found</h4>
+        <p style="margin: 0; color: #991b1b; font-size: 0.95rem;">Found in {total_pairs} document pair{'' if total_pairs == 1 else 's'}</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Display each document pair
     for i, ((pdfA, pdfB), matches) in enumerate(matches_by_pair.items(), 1):
         pdfA_short = pdfA.replace('.pdf', '')
         pdfB_short = pdfB.replace('.pdf', '')
         
-        with st.expander(f"🔍 Duplicate Group #{i}: {pdfA_short} ↔ {pdfB_short} ({len(matches)} matches)", expanded=i==1):
-            st.markdown(f"""
-            <div class="match-highlight">
-                <strong>Documents:</strong> {pdfA_short} and {pdfB_short}<br>
-                <strong>Total Matches:</strong> {len(matches)}
-            </div>
-            """, unsafe_allow_html=True)
+        with st.expander(f"📁 {pdfA_short} ↔ {pdfB_short} ({len(matches)} match{'' if len(matches) == 1 else 'es'})", expanded=i==1):
             
-            st.markdown("**Identical Content Blocks:**")
+            # Clean document header
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown(f"""
+                <div style="background: #eff6ff; padding: 0.75rem; border-radius: 8px; text-align: center;">
+                    <div style="color: #1e40af; font-weight: 600;">📄 {pdfA_short}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with col2:
+                st.markdown(f"""
+                <div style="background: #f0fdf4; padding: 0.75rem; border-radius: 8px; text-align: center;">
+                    <div style="color: #15803d; font-weight: 600;">📄 {pdfB_short}</div>
+                </div>
+                """, unsafe_allow_html=True)
             
-            # Show first 3 matches by default
-            def display_match(match_data, match_num):
-                chunkA, chunkB, content = match_data
-                st.markdown(
-                    f"""
-                    <div style="display: flex; align-items: center; margin-bottom: 1rem;">
-                        <span style="background: #fef3c7; color: #b45309; font-weight: bold; border-radius: 8px; padding: 0.4rem 0.8rem; margin-right: 1rem;">
-                            📄 {pdfA_short} Page {chunkA+1}
-                        </span>
-                        <span style="font-size: 1.5rem; margin: 0 0.5rem;">⇄</span>
-                        <span style="background: #dbeafe; color: #1e40af; font-weight: bold; border-radius: 8px; padding: 0.4rem 0.8rem;">
-                            📄 {pdfB_short} Page {chunkB+1}
-                        </span>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
+            st.markdown("<div style='height: 1.5rem;'></div>", unsafe_allow_html=True)
+            
+            # Display matches in a clean way
+            for j, (chunkA, chunkB, content) in enumerate(matches, 1):
                 
-                # Show the actual matched content
+                # Match header with page numbers
+                st.markdown(f"""
+                <div style="background: #f8fafc; 
+                            border-radius: 8px; 
+                            padding: 1rem; 
+                            margin-bottom: 1rem;
+                            border: 1px solid #e2e8f0;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
+                        <span style="color: #64748b; font-weight: 600; font-size: 0.9rem;">Match #{j}</span>
+                        <div style="display: flex; gap: 0.75rem; align-items: center;">
+                            <span style="background: #dbeafe; color: #1e40af; padding: 0.25rem 0.75rem; border-radius: 6px; font-size: 0.85rem;">
+                                Page {chunkA+1}
+                            </span>
+                            <span style="color: #cbd5e1;">↔</span>
+                            <span style="background: #dcfce7; color: #15803d; padding: 0.25rem 0.75rem; border-radius: 6px; font-size: 0.85rem;">
+                                Page {chunkB+1}
+                            </span>
+                        </div>
+                    </div>
+                """, unsafe_allow_html=True)
+                
+                # Show matched content
                 if content and len(content.strip()) > 0:
-                    # Clean and format the content for better display
                     display_content = content.strip()
-                    
-                    # Show full content with option to expand/collapse
-                    if len(display_content) > 500:
-                        # Create expandable content for long matches
-                        with st.expander(f"📝 View Matched Text ({len(display_content)} characters)", expanded=False):
-                            st.markdown(
-                                f"""
-                                <div style="background: #fef3c7; border: 2px solid #f59e0b; padding: 1.5rem; margin: 0.5rem 0; border-radius: 8px; color: #92400e;">
-                                    <strong style="color: #92400e; font-size: 1.1rem;">🚨 IDENTICAL TEXT DETECTED:</strong><br><br>
-                                    <div style="background: #ffffff; padding: 1rem; border-radius: 6px; border-left: 4px solid #f59e0b; font-family: 'Courier New', monospace; font-size: 0.9rem; line-height: 1.6; color: #1f2937; max-height: 400px; overflow-y: auto;">
-                                        {display_content}
-                                    </div>
-                                </div>
-                                """,
-                                unsafe_allow_html=True
-                            )
-                    else:
-                        # Show shorter content directly
-                        st.markdown(
-                            f"""
-                            <div style="background: #fef3c7; border: 2px solid #f59e0b; padding: 1.5rem; margin: 0.5rem 0; border-radius: 8px; color: #92400e;">
-                                <strong style="color: #92400e; font-size: 1.1rem;">🚨 IDENTICAL TEXT DETECTED:</strong><br><br>
-                                <div style="background: #ffffff; padding: 1rem; border-radius: 6px; border-left: 4px solid #f59e0b; font-family: 'Courier New', monospace; font-size: 0.9rem; line-height: 1.6; color: #1f2937;">
-                                    {display_content}
-                                </div>
-                            </div>
-                            """,
-                            unsafe_allow_html=True
-                        )
-                    
-                    # Add character count and match statistics
                     word_count = len(display_content.split())
-                    st.markdown(
-                        f"""
-                        <div style="background: #e0f2fe; border-left: 4px solid #0288d1; padding: 0.75rem; margin: 0.5rem 0; border-radius: 4px; color: #01579b;">
-                            <strong>📊 Match Statistics:</strong> {len(display_content)} characters, {word_count} words
+                    char_count = len(display_content)
+                    
+                    # Show word/character count
+                    st.markdown(f"""
+                    <div style="margin-bottom: 0.5rem; color: #6b7280; font-size: 0.85rem;">
+                        📊 {word_count} words • {char_count} characters
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Always show full text in expander
+                    with st.expander("📖 View Full Text", expanded=False):
+                        st.markdown(f"""
+                        <div style="background: #fafafa; 
+                                    padding: 1.25rem; 
+                                    border-radius: 8px; 
+                                    border: 1px solid #e5e7eb;
+                                    font-family: 'Segoe UI', system-ui, sans-serif;
+                                    font-size: 0.9rem;
+                                    line-height: 1.7;
+                                    color: #1f2937;
+                                    max-height: 400px;
+                                    overflow-y: auto;">
+                            {display_content}
                         </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
+                        """, unsafe_allow_html=True)
                 else:
-                    st.markdown(
-                        """
-                        <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 0.5rem; margin: 0.5rem 0 1rem 0; border-radius: 4px; font-style: italic; color: #92400e;">
-                            ⚠️ Content preview not available
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
-            
-            # Display first 3 matches
-            for j, match in enumerate(matches[:3], 1):
-                display_match(match, j)
-            
-            # If there are more than 3 matches, show them in an expander
-            if len(matches) > 3:
-                remaining_matches = matches[3:]
-                with st.expander(f"🔍 Show {len(remaining_matches)} more identical blocks", expanded=False):
-                    for j, match in enumerate(remaining_matches, 4):
-                        display_match(match, j)
-                        st.markdown("---")  # Add separator between matches
+                    st.markdown("""
+                    <div style="background: #fef3c7; 
+                                padding: 0.75rem; 
+                                border-radius: 6px; 
+                                color: #92400e; 
+                                font-size: 0.9rem;
+                                text-align: center;">
+                        ⚠️ Content preview not available
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                st.markdown("</div>", unsafe_allow_html=True)
+                
+                # Add spacing between matches
+                if j < len(matches):
+                    st.markdown("<div style='height: 1rem;'></div>", unsafe_allow_html=True)
 
 
 def create_pdf_image_extractor():
@@ -1287,12 +1320,6 @@ def run_image_analysis_concurrent(directory):
     progress_container = st.container()
     
     with progress_container:
-        st.markdown("""
-        <div class="progress-container">
-            <span style='font-size:2rem;'>🖼️</span> Finding Images in Your Documents (Concurrent Mode)<br>
-            <small>Using parallel processing for faster image analysis...</small>
-        </div>
-        """, unsafe_allow_html=True)
         
         # Progress with spinner for image analysis
         img_col1, img_col2 = st.columns([1, 20])
@@ -1570,12 +1597,6 @@ def run_text_analysis_concurrent(directory, chunk_size=5000, similarity_threshol
     
     try:
         with progress_container:
-            st.markdown("""
-            <div class="progress-container">
-                <span style='font-size:2rem;'>🚀</span> Analyzing Your Documents (Concurrent Mode)<br>
-                <small>Using parallel processing for faster analysis...</small>
-            </div>
-            """, unsafe_allow_html=True)
             
             # Progress with spinner
             col1, col2 = st.columns([1, 20])
@@ -1792,42 +1813,6 @@ def main():
                 st.session_state.duplicate_image_pairs = []
                 st.rerun()
         
-        # Combined Analysis Option
-        st.sidebar.markdown("---")
-        st.sidebar.markdown("### 🚀 Complete Analysis")
-        
-        if not st.session_state.text_analysis_complete and not st.session_state.image_analysis_started:
-            if st.sidebar.button("🎯 Analyze Both Text & Images", type="primary"):
-                # Start text analysis first
-                semantic_scores, sequence_scores, exact_matches = run_text_analysis(directory)
-                if semantic_scores is not None:
-                    st.session_state.text_analysis_complete = True
-                    # Then start image analysis
-                    st.session_state.image_analysis_started = True
-                    st.rerun()
-        elif st.session_state.text_analysis_complete and not st.session_state.image_analysis_started:
-            if st.sidebar.button("🖼️ Add Image Analysis", type="secondary"):
-                st.session_state.image_analysis_started = True
-                st.rerun()
-        elif not st.session_state.text_analysis_complete and st.session_state.image_analysis_complete:
-            if st.sidebar.button("📝 Add Text Analysis", type="secondary"):
-                semantic_scores, sequence_scores, exact_matches = run_text_analysis(directory)
-                if semantic_scores is not None:
-                    st.session_state.text_analysis_complete = True
-                    st.rerun()
-        elif st.session_state.text_analysis_complete and st.session_state.image_analysis_complete:
-            st.sidebar.success("🎉 Complete Analysis Done!")
-            if st.sidebar.button("🔄 Start Fresh Analysis"):
-                # Reset everything
-                st.session_state.text_analysis_complete = False
-                st.session_state.image_analysis_started = False
-                st.session_state.image_analysis_complete = False
-                st.session_state.semantic_scores = None
-                st.session_state.sequence_scores = None
-                st.session_state.exact_matches = None
-                st.session_state.image_analysis_logs = []
-                st.session_state.duplicate_image_pairs = []
-                st.rerun()
     
     # Main content area
     if directory and os.path.exists(directory):
